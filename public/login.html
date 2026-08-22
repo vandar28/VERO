@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>VERO — Вход</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root {
+  --bg-deep: #0a0e1a;
+  --bg-card: #111627;
+  --bg-input: #0d1120;
+  --border: #1a1f35;
+  --border-focus: #5270e8;
+  --text: #c8cde0;
+  --text-secondary: #8a8ea8;
+  --text-muted: #5a5e78;
+  --accent: #5270e8;
+  --accent-light: #6b84f2;
+  --accent-bg: rgba(82,112,232,0.06);
+  --red: #e85d5d;
+  --orange: #f0a040;
+  --orange-bg: rgba(240,160,64,0.08);
+  --orange-border: rgba(240,160,64,0.2);
+  --radius: 16px;
+  --radius-sm: 10px;
+}
+
+body{
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg-deep);
+  background-image: radial-gradient(ellipse at 60% 40%, rgba(82,112,232,0.04) 0%, transparent 60%);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.card{
+  background: var(--bg-card);
+  padding: 32px 24px;
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 400px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+}
+
+.logo-top {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.logo-top img {
+  width: 100px;
+  height: 100px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 16px rgba(82,112,232,0.3));
+  background: transparent;
+}
+
+.card .sub {
+  text-align: center;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 20px;
+  letter-spacing: -0.01em;
+}
+
+.info-box {
+  background: var(--orange-bg);
+  border: 1px solid var(--orange-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  color: var(--orange);
+  font-size: 12px;
+  text-align: center;
+}
+
+.form-group { margin-bottom: 14px }
+.form-group label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 5px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 13px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 15px;
+  outline: none;
+  transition: all 0.2s ease;
+  font-family: 'Inter', sans-serif;
+  -webkit-appearance: none;
+}
+
+.form-group input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(82,112,232,0.1);
+}
+
+.btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: 'Inter', sans-serif;
+  letter-spacing: 0.02em;
+  border: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  margin-top: 4px;
+}
+.btn-primary:active {
+  background: var(--accent-light);
+  transform: scale(0.98);
+}
+
+.btn-temp {
+  background: var(--orange-bg);
+  color: var(--orange);
+  border: 1px solid var(--orange-border);
+  margin-top: 8px;
+}
+.btn-temp:active {
+  background: rgba(240,160,64,0.15);
+}
+
+.error {
+  color: var(--red);
+  text-align: center;
+  margin-top: 14px;
+  font-size: 12px;
+  display: none;
+  padding: 8px;
+  background: rgba(232,93,93,0.08);
+  border-radius: 8px;
+}
+
+.link {
+  text-align: center;
+  margin-top: 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.link a {
+  color: var(--accent-light);
+  text-decoration: none;
+  font-weight: 500;
+}
+.link a:active { opacity: 0.7 }
+
+/* ========== ТЕЛЕФОН ========== */
+@media (max-width: 480px) {
+  .card {
+    padding: 28px 20px;
+    border-radius: 20px;
+  }
+  
+  .logo-top img {
+    width: 90px;
+    height: 90px;
+  }
+  
+  .card .sub {
+    font-size: 17px;
+  }
+  
+  .form-group input {
+    padding: 14px 16px;
+    font-size: 16px;
+  }
+  
+  .btn {
+    padding: 15px;
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 360px) {
+  .card {
+    padding: 24px 16px;
+  }
+  
+  .logo-top img {
+    width: 75px;
+    height: 75px;
+  }
+  
+  .form-group input {
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+}
+</style>
+</head>
+<body>
+<div class="card">
+    <div class="logo-top">
+        <img src="image/logotip.png" alt="Логотип" onerror="this.style.display='none';this.parentElement.innerHTML='<div style=width:100px;height:100px;display:flex;align-items:center;justify-content:center;font-size:50px;color:var(--accent-light);font-weight:700>V</div>'">
+    </div>
+    <div class="sub">Вход в аккаунт</div>
+    
+    <div class="info-box" id="tempInfo" style="display:none">
+        ⚡ Временный аккаунт — вход без пароля
+    </div>
+    
+    <form id="f">
+        <div class="form-group"><label>Email</label><input type="email" id="em" required placeholder="user@example.com" autocomplete="email"></div>
+        <div class="form-group" id="pwGroup"><label>Пароль</label><input type="password" id="pw" placeholder="••••••" autocomplete="current-password"></div>
+        <button type="submit" class="btn btn-primary" id="loginBtn">Войти</button>
+        <button type="button" class="btn btn-temp" id="tempLoginBtn" style="display:none">⚡ Войти без пароля</button>
+    </form>
+    <div class="error" id="er"></div>
+    <div class="link">Нет аккаунта? <a href="register.html">Регистрация</a> · <a href="register.html" onclick="localStorage.setItem('want_temp','true')">Временный</a></div>
+</div>
+
+<script>
+var isTempLogin = false;
+
+document.getElementById('em').addEventListener('input', function() {
+    if (this.value.includes('temp')) {
+        document.getElementById('tempLoginBtn').style.display = 'block';
+        document.getElementById('tempInfo').style.display = 'block';
+    }
+});
+
+document.getElementById('tempLoginBtn').addEventListener('click', function() {
+    isTempLogin = true;
+    document.getElementById('pw').value = '';
+    document.getElementById('f').dispatchEvent(new Event('submit'));
+});
+
+document.getElementById('f').addEventListener('submit',async function(e){
+    e.preventDefault();
+    var email = document.getElementById('em').value;
+    var password = document.getElementById('pw').value;
+    if (!password || isTempLogin) isTempLogin = true;
+    
+    try{
+        var r = await fetch('/api/login',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({email: email, password: password})
+        });
+        var d = await r.json();
+        if(r.ok){
+            localStorage.setItem('token',d.token);
+            localStorage.setItem('user',JSON.stringify(d.user));
+            if (d.user.is_temp) localStorage.setItem('is_temp', 'true');
+            location.href = '/dashboard.html';
+        } else {
+            document.getElementById('er').textContent = d.error;
+            document.getElementById('er').style.display = 'block';
+            if (!isTempLogin) {
+                isTempLogin = true;
+                document.getElementById('pw').value = '';
+                setTimeout(function(){ document.getElementById('f').dispatchEvent(new Event('submit')); }, 500);
+                return;
+            }
+        }
+    } catch(err) {
+        document.getElementById('er').textContent = 'Ошибка соединения';
+        document.getElementById('er').style.display = 'block';
+    }
+    isTempLogin = false;
+});
+
+if (localStorage.getItem('want_temp') === 'true') {
+    localStorage.removeItem('want_temp');
+    document.getElementById('tempInfo').style.display = 'block';
+    document.getElementById('tempLoginBtn').style.display = 'block';
+}
+</script>
+</body>
+</html>

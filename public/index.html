@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>VERO — Мессенджер</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root {
+  --bg-deep: #0a0e1a;
+  --bg-card: #111627;
+  --bg-input: #0d1120;
+  --border: #1a1f35;
+  --border-light: #222840;
+  --text: #c8cde0;
+  --text-secondary: #6b708a;
+  --text-muted: #4a4e65;
+  --accent: #5270e8;
+  --accent-light: #6b84f2;
+  --accent-bg: rgba(82,112,232,0.08);
+  --accent-glow: rgba(82,112,232,0.15);
+  --radius: 16px;
+  --radius-sm: 10px;
+  --radius-xs: 8px;
+  --transition: 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+
+body{
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg-deep);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.bg{
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: 
+    radial-gradient(ellipse at 50% 30%, rgba(82,112,232,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(82,112,232,0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 20% 20%, rgba(240,160,64,0.02) 0%, transparent 40%);
+  z-index: 0;
+}
+
+.container{
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding: 20px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.logo-wrapper {
+  margin-bottom: 16px;
+  display: inline-block;
+  position: relative;
+}
+
+.logo-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(82,112,232,0.12) 0%, transparent 70%);
+  filter: blur(50px);
+  z-index: -1;
+  animation: logoGlow 4s ease-in-out infinite;
+}
+
+.logo-img {
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 32px rgba(82,112,232,0.25));
+  transition: all var(--transition);
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+.logo-img:hover {
+  transform: scale(1.03);
+  filter: drop-shadow(0 12px 40px rgba(82,112,232,0.4));
+}
+
+@keyframes logoGlow {
+  0%, 100% { opacity: 0.6; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  font-weight: 400;
+  margin-bottom: 40px;
+  line-height: 1.6;
+}
+
+.subtitle .highlight {
+  color: var(--accent-light);
+  font-weight: 600;
+}
+
+.buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.btn {
+  padding: 14px 20px;
+  border-radius: 50px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: all var(--transition);
+  cursor: pointer;
+  border: none;
+  font-family: 'Inter', sans-serif;
+  text-align: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--accent-light);
+  border: 1.5px solid rgba(107,132,242,0.3);
+}
+
+.btn-outline:active {
+  border-color: var(--accent-light);
+  background: var(--accent-bg);
+  transform: scale(0.97);
+}
+
+.btn-filled {
+  background: var(--accent);
+  color: #fff;
+  border: 1.5px solid var(--accent);
+}
+
+.btn-filled:active {
+  background: var(--accent-light);
+  transform: scale(0.97);
+}
+
+/* ========== ТЕЛЕФОН ========== */
+@media (max-width: 480px) {
+  .container {
+    padding: 16px;
+  }
+  
+  .logo-img {
+    width: 130px;
+    height: 130px;
+  }
+  
+  .logo-wrapper::after {
+    width: 160px;
+    height: 160px;
+  }
+  
+  .subtitle {
+    font-size: 13px;
+    margin-bottom: 32px;
+  }
+  
+  .btn {
+    padding: 15px 20px;
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 360px) {
+  .logo-img {
+    width: 110px;
+    height: 110px;
+  }
+  
+  .subtitle {
+    font-size: 12px;
+  }
+  
+  .btn {
+    padding: 14px 16px;
+    font-size: 14px;
+  }
+}
+
+@media (min-width: 768px) {
+  .buttons {
+    flex-direction: row;
+    justify-content: center;
+  }
+  
+  .btn {
+    min-width: 160px;
+  }
+}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="container">
+    <div class="logo-wrapper">
+        <img src="image/logotip.png" alt="Логотип" class="logo-img" onerror="this.style.display='none';this.parentElement.innerHTML='<div style=width:160px;height:160px;display:flex;align-items:center;justify-content:center;font-size:70px;color:var(--accent-light);font-weight:700;filter:drop-shadow(0 8px 24px rgba(82,112,232,0.3))>V</div>'">
+    </div>
+    <div class="subtitle">
+        Быстрый обмен <span class="highlight">файлами</span><br>и <span class="highlight">сообщениями</span> без границ
+    </div>
+    <div class="buttons">
+        <a href="login.html" class="btn btn-outline">Войти</a>
+        <a href="register.html" class="btn btn-filled">Регистрация</a>
+    </div>
+</div>
+</body>
+</html>

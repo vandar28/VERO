@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>VERO — Регистрация</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root {
+  --bg-deep: #0a0e1a;
+  --bg-card: #111627;
+  --bg-input: #0d1120;
+  --border: #1a1f35;
+  --border-focus: #5270e8;
+  --text: #c8cde0;
+  --text-secondary: #8a8ea8;
+  --text-muted: #5a5e78;
+  --accent: #5270e8;
+  --accent-light: #6b84f2;
+  --accent-bg: rgba(82,112,232,0.06);
+  --red: #e85d5d;
+  --orange: #f0a040;
+  --orange-bg: rgba(240,160,64,0.08);
+  --orange-border: rgba(240,160,64,0.2);
+  --radius: 16px;
+  --radius-sm: 10px;
+}
+
+body{
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg-deep);
+  background-image: radial-gradient(ellipse at 30% 60%, rgba(82,112,232,0.04) 0%, transparent 60%);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.card{
+  background: var(--bg-card);
+  padding: 28px 24px 24px;
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+}
+
+.logo-top {
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.logo-top img {
+  width: 90px;
+  height: 90px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 16px rgba(82,112,232,0.3));
+  background: transparent;
+}
+
+.card .sub {
+  text-align: center;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 18px;
+  letter-spacing: -0.01em;
+}
+
+.account-type { margin-bottom: 16px }
+.account-type .type-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-bottom: 6px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.type-switch {
+  display: flex;
+  gap: 6px;
+  background: var(--bg-input);
+  padding: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.type-btn {
+  flex: 1;
+  padding: 10px 6px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  border: none;
+  background: transparent;
+  font-family: 'Inter', sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.type-btn.active {
+  background: var(--bg-card);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.type-btn .type-icon { display: block; font-size: 16px; margin-bottom: 2px }
+.type-btn .type-name { display: block; font-size: 11px }
+.type-btn .type-desc { display: block; font-size: 9px; color: var(--text-muted); margin-top: 1px }
+
+.form-group { margin-bottom: 12px }
+.form-group label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-bottom: 4px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+  font-family: 'Inter', sans-serif;
+  -webkit-appearance: none;
+}
+
+.form-group input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(82,112,232,0.1);
+}
+
+#passwordGroup { transition: all 0.25s ease; overflow: hidden }
+#passwordGroup.hidden { max-height: 0; opacity: 0; margin-bottom: 0 }
+#passwordGroup.visible { max-height: 100px; opacity: 1 }
+
+.avatar-upload {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+}
+
+.avatar-preview {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar-preview img { width: 100%; height: 100%; object-fit: cover }
+.avatar-preview span { font-size: 20px; opacity: 0.4 }
+.avatar-upload input { display: none }
+.avatar-upload label {
+  color: var(--accent-light);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+}
+.avatar-upload label:active { opacity: 0.7 }
+
+.btn {
+  width: 100%;
+  padding: 13px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: 'Inter', sans-serif;
+  letter-spacing: 0.02em;
+  border: none;
+  margin-top: 2px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:active {
+  background: var(--accent-light);
+  transform: scale(0.98);
+}
+
+.btn-temp {
+  background: var(--orange-bg);
+  color: var(--orange);
+  border: 1px solid var(--orange-border);
+}
+.btn-temp:active { background: rgba(240,160,64,0.15) }
+
+.error {
+  color: var(--red);
+  text-align: center;
+  margin-top: 12px;
+  font-size: 11px;
+  display: none;
+  padding: 8px;
+  background: rgba(232,93,93,0.08);
+  border-radius: 8px;
+}
+
+.link {
+  text-align: center;
+  margin-top: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.link a {
+  color: var(--accent-light);
+  text-decoration: none;
+  font-weight: 500;
+}
+.link a:active { opacity: 0.7 }
+
+/* ========== ТЕЛЕФОН ========== */
+@media (max-width: 480px) {
+  .card {
+    padding: 24px 18px 20px;
+    border-radius: 20px;
+  }
+  
+  .logo-top img {
+    width: 80px;
+    height: 80px;
+  }
+  
+  .card .sub {
+    font-size: 17px;
+  }
+  
+  .form-group input {
+    padding: 13px 14px;
+    font-size: 15px;
+  }
+  
+  .btn {
+    padding: 14px;
+    font-size: 15px;
+  }
+  
+  .type-btn {
+    padding: 12px 6px;
+  }
+}
+
+@media (max-width: 360px) {
+  .card {
+    padding: 20px 14px 16px;
+  }
+  
+  .logo-top img {
+    width: 70px;
+    height: 70px;
+  }
+}
+</style>
+</head>
+<body>
+<div class="card">
+    <div class="logo-top">
+        <img src="image/logotip.png" alt="Логотип" onerror="this.style.display='none';this.parentElement.innerHTML='<div style=width:90px;height:90px;display:flex;align-items:center;justify-content:center;font-size:45px;color:var(--accent-light);font-weight:700>V</div>'">
+    </div>
+    <div class="sub">Создать аккаунт</div>
+    
+    <form id="f" enctype="multipart/form-data">
+        <div class="account-type">
+            <label class="type-label">Тип аккаунта</label>
+            <div class="type-switch">
+                <div class="type-btn active" data-type="permanent" onclick="switchType('permanent')">
+                    <span class="type-icon">🔒</span>
+                    <span class="type-name">Постоянный</span>
+                    <span class="type-desc">С паролем</span>
+                </div>
+                <div class="type-btn" data-type="temp" onclick="switchType('temp')">
+                    <span class="type-icon">⚡</span>
+                    <span class="type-name">Временный</span>
+                    <span class="type-desc">Удалится при выходе</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="avatar-upload">
+            <div class="avatar-preview" id="avPrev"><span>📷</span></div>
+            <div>
+                <input type="file" id="avInput" accept="image/*">
+                <label for="avInput">Выбрать аватарку</label>
+            </div>
+        </div>
+        <div class="form-group"><label>Имя</label><input type="text" id="un" required placeholder="Ваше имя" autocomplete="name"></div>
+        <div class="form-group"><label>Email</label><input type="email" id="em" required placeholder="user@example.com" autocomplete="email"></div>
+        <div class="form-group visible" id="passwordGroup">
+            <label>Пароль</label>
+            <input type="password" id="pw" minlength="6" placeholder="Минимум 6 символов" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary" id="submitBtn">Зарегистрироваться</button>
+    </form>
+    <div class="error" id="er"></div>
+    <div class="link">Уже есть аккаунт? <a href="login.html">Войти</a></div>
+</div>
+
+<script>
+var accountType = 'permanent';
+
+function switchType(type) {
+    accountType = type;
+    document.querySelectorAll('.type-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelector('[data-type="' + type + '"]').classList.add('active');
+    
+    var pwGroup = document.getElementById('passwordGroup');
+    var pwInput = document.getElementById('pw');
+    var submitBtn = document.getElementById('submitBtn');
+    
+    if (type === 'temp') {
+        pwGroup.classList.remove('visible'); pwGroup.classList.add('hidden');
+        pwInput.removeAttribute('required'); pwInput.value = '';
+        submitBtn.textContent = '⚡ Создать временный аккаунт';
+        submitBtn.classList.add('btn-temp');
+    } else {
+        pwGroup.classList.remove('hidden'); pwGroup.classList.add('visible');
+        pwInput.setAttribute('required', 'required');
+        submitBtn.textContent = 'Зарегистрироваться';
+        submitBtn.classList.remove('btn-temp');
+    }
+}
+
+document.getElementById('avInput').addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (file) {
+        var reader = new FileReader();
+        reader.onload = function(ev) {
+            document.getElementById('avPrev').innerHTML = '<img src="' + ev.target.result + '">';
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
+document.getElementById('f').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    var fd = new FormData();
+    var av = document.getElementById('avInput').files[0];
+    if (av) fd.append('avatar', av);
+    fd.append('username', document.getElementById('un').value);
+    fd.append('email', document.getElementById('em').value);
+    fd.append('is_temp', accountType === 'temp');
+    if (accountType === 'permanent') fd.append('password', document.getElementById('pw').value);
+    
+    try {
+        var r = await fetch('/api/register', { method: 'POST', body: fd });
+        var d = await r.json();
+        if (r.ok) {
+            localStorage.setItem('token', d.token);
+            localStorage.setItem('user', JSON.stringify(d.user));
+            if (d.user.is_temp) localStorage.setItem('is_temp', 'true');
+            location.href = '/dashboard.html';
+        } else {
+            document.getElementById('er').textContent = d.error;
+            document.getElementById('er').style.display = 'block';
+        }
+    } catch(err) {
+        document.getElementById('er').textContent = 'Ошибка соединения';
+        document.getElementById('er').style.display = 'block';
+    }
+});
+</script>
+</body>
+</html>

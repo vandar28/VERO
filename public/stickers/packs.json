@@ -1,0 +1,9 @@
+{
+  "packs": [
+    { "id": "shrek", "name": "🟢 Shrek" },
+    { "id": "deadpool", "name": "🔴 Deadpool" },
+    { "id": "deadpool-marvel", "name": "🟡 Deadpool Marvel" },
+    { "id": "cat", "name": "🐱 Cat" },
+    { "id": "horimiya", "name": "🌸 Horimiya" }
+  ]
+}
