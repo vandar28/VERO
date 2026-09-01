@@ -2916,7 +2916,10 @@ async function sm(id){
         cancelReply();
     }
     
-    api('/api/messages/' + id, { method: 'POST', body: fd }).then(function() {
+    api('/api/messages/' + id, { method: 'POST', body: fd }).then(async function(r) {
+        var d={};
+        try{d=await r.json()}catch(_){}
+        if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
         if (inp) inp.value = '';
         if (fi) fi.value = '';
         selfDestructMode = false;
@@ -2925,7 +2928,7 @@ async function sm(id){
         lm(id);
     }).catch(function(err) {
         console.error('Ошибка отправки:', err);
-        alert('Ошибка отправки сообщения');
+        alert('Не удалось отправить файл: '+(err.message||'неизвестная ошибка'));
     });
 }
 
@@ -3255,7 +3258,31 @@ function setActiveAvatar(id,path){api('/api/avatars/'+id+'/activate',{method:'PO
 
 function deleteAvatar(id){if(!confirm('Удалить?'))return;api('/api/avatars/'+id,{method:'DELETE'}).then(function(){loadMyAvatars()}).catch(function(){alert('Нельзя удалить текущую')})}
 
-function uploadNewAvatar(e){var f=e.target.files[0];if(!f)return;var fd=new FormData();fd.append('avatar',f);api('/api/avatar',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(d){document.getElementById('currentAvatar').src=d.avatar;U.avatar=d.avatar;localStorage.setItem('user',JSON.stringify(U));loadMyAvatars()}).catch(function(){alert('Ошибка')});e.target.value=''}
+function uploadNewAvatar(e){
+    var f=e.target.files[0];
+    if(!f)return;
+    var fd=new FormData();
+    fd.append('avatar',f,f.name||'avatar');
+    api('/api/avatar',{method:'POST',body:fd})
+      .then(async function(r){
+        var d={};
+        try{d=await r.json()}catch(_){}
+        if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+        if(!d.avatar) throw new Error('Сервер не вернул URL аватарки');
+        return d;
+      })
+      .then(function(d){
+        document.getElementById('currentAvatar').src=d.avatar;
+        U.avatar=d.avatar;
+        localStorage.setItem('user',JSON.stringify(U));
+        loadMyAvatars();
+      })
+      .catch(function(err){
+        console.error('Ошибка аватарки:',err);
+        alert('Не удалось загрузить аватарку: '+(err.message||'неизвестная ошибка'));
+      })
+      .finally(function(){e.target.value=''});
+}
 
 function viewUserAvatars(uid,uname){api('/api/user/'+uid+'/avatars').then(function(r){return r.json()}).then(function(d){viewerAvatars=d.avatars||[];if(!viewerAvatars.length){alert('Нет аватарок');return}viewerIndex=0;document.getElementById('viewerUsername').textContent=uname;document.getElementById('avatarViewer').classList.add('active');document.body.style.overflow='hidden';updateViewer()})}
 

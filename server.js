@@ -28,21 +28,35 @@ if (!process.env.DATABASE_URL) {
 }
 
 // ===== НАСТРОЙКА CLOUDINARY =====
-cloudinary.config({
+const cloudinaryConfig = {
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
-});
+};
 
+if (!cloudinaryConfig.cloud_name || !cloudinaryConfig.api_key || !cloudinaryConfig.api_secret) {
+  console.error('❌ Не заданы CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET');
+  process.exit(1);
+}
+
+cloudinary.config(cloudinaryConfig);
 console.log('✅ Cloudinary настроен с cloud_name:', process.env.CLOUDINARY_CLOUD_NAME);
 
 // ===== НАСТРОЙКА MULTER ДЛЯ CLOUDINARY =====
+// ===== НАСТРОЙКА CLOUDINARY STORAGE =====
+// Не ограничиваем allowed_formats: телефоны могут отдавать HEIC/AVIF,
+// а MediaRecorder — audio/webm, video/webm, mp4 и другие варианты.
+// Cloudinary сам определяет тип ресурса через resource_type: 'auto'.
 const cloudinaryStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: {
-    folder: 'vero_messenger',
-    resource_type: 'auto',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'ogg', 'mp3', 'pdf', 'doc', 'docx']
+  params: function(req, file) {
+    const isAvatar = req.path === '/api/avatar' || req.path === '/api/register';
+    const options = {
+      folder: isAvatar ? 'vero_avatars' : 'vero_messenger',
+      resource_type: isAvatar ? 'image' : 'auto'
+    };
+    if (isAvatar) options.transformation = [{ width: 200, height: 200, crop: 'limit' }];
+    return options;
   }
 });
 
@@ -51,21 +65,12 @@ const upload = multer({
   limits: { fileSize: Number(process.env.MAX_FILE_SIZE || 100) * 1024 * 1024 }
 });
 
-// ===== НАСТРОЙКА MULTER ДЛЯ АВАТАРОК (тоже в Cloudinary) =====
-const avatarCloudinaryStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'vero_avatars',
-    resource_type: 'image',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-    transformation: [{ width: 200, height: 200, crop: 'limit' }]
-  }
-});
-
+// Для аватарок используется тот же storage, но route определяет папку.
 const uploadAvatar = multer({
-  storage: avatarCloudinaryStorage,
+  storage: cloudinaryStorage,
   limits: { fileSize: 5 * 1024 * 1024 }
 });
+
 
 // ===== БАЗА ДАННЫХ =====
 const pool = new Pool({
@@ -521,7 +526,7 @@ app.post('/api/avatar', auth, uploadAvatar.single('avatar'), async function(req,
     res.json({ avatar: avatarPath });
   } catch (error) {
     console.error('❌ Ошибка загрузки аватарки:', error);
-    res.status(500).json({ error: 'Ошибка загрузки аватарки' });
+    res.status(500).json({ error: error.message || 'Ошибка загрузки аватарки' });
   }
 });
 
@@ -587,7 +592,7 @@ app.post('/api/upload', auth, upload.single('file'), async function(req, res) {
     res.json({ ok: true, url: fileUrl });
   } catch (error) {
     console.error('❌ Ошибка загрузки файла:', error);
-    res.status(500).json({ error: 'Ошибка загрузки файла' });
+    res.status(500).json({ error: error.message || 'Ошибка загрузки файла' });
   }
 });
 
@@ -700,7 +705,7 @@ app.post('/api/messages/:fid', auth, upload.single('file'), async function(req, 
     res.json({ ok: true });
   } catch (error) {
     console.error('❌ Ошибка отправки сообщения:', error);
-    res.status(500).json({ error: 'Ошибка отправки сообщения' });
+    res.status(500).json({ error: error.message || 'Ошибка отправки сообщения' });
   }
 });
 
@@ -907,6 +912,21 @@ app.get('/api/pinned/private/:fid', auth, async function(req, res) {
   const u2 = Math.max(req.userId, fid);
   const pinned = await dbAll("SELECT pp.*, m.message_text, m.file_name, m.file_type, m.file_path, m.sender_id, m.created_at as msg_created, s.username, s.avatar FROM private_pins pp JOIN messages m ON pp.message_id=m.id JOIN users s ON m.sender_id=s.id WHERE pp.chat_user1=? AND pp.chat_user2=? AND pp.pinned_by=? ORDER BY pp.created_at DESC", [u1, u2, req.userId]);
   res.json({ pinned: pinned });
+});
+
+// ===== ОБРАБОТЧИК ОШИБОК ЗАГРУЗКИ =====
+// Ошибки multer/Cloudinary возникают до тела route, поэтому без этого
+// обработчика браузер получал HTML вместо JSON и показывал просто «Ошибка».
+app.use(function(err, req, res, next) {
+  if (err) {
+    console.error('❌ Upload/API error:', err);
+    const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    return res.status(status).json({
+      error: err.message || 'Ошибка загрузки файла',
+      code: err.code || 'UPLOAD_ERROR'
+    });
+  }
+  next();
 });
 
 // Стикеры
