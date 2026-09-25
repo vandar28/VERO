@@ -1234,7 +1234,18 @@ body.chat-open #tc {
 .icon-btn:hover .chat-icon,.voice-btn:hover .chat-icon{color:#69a9ff;transform:scale(1.08)}
 
 .chat-emoji,.reaction-picker,.reaction-badge,.photo-send-option,.recording-bar{font-family:'Noto Color Emoji','Apple Color Emoji','Segoe UI Emoji',sans-serif}
+
+.call-overlay{position:fixed;inset:0;background:rgba(5,8,18,.88);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
+.call-window{width:min(520px,96vw);background:var(--bg-card);border:1px solid var(--border);border-radius:18px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.call-title{font-size:15px;font-weight:700;color:var(--text);text-align:center;margin-bottom:12px}
+.call-videos{position:relative;min-height:260px;background:#05070d;border-radius:14px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.call-videos video{width:100%;height:100%;object-fit:cover}
+.call-videos #callLocalVideo{position:absolute;width:110px;height:150px;right:10px;bottom:10px;border-radius:10px;border:2px solid var(--accent-light);object-fit:cover;background:#000}
+.call-avatar{font-size:64px}
+.call-status{text-align:center;color:var(--text-secondary);font-size:12px;margin:12px 0}
+.call-actions{display:flex;gap:8px;justify-content:center}
 </style>
+<script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
 <div class="container">
@@ -1318,6 +1329,7 @@ body.chat-open #tc {
   <div class="modal">
     <h2 id="stickerModalTitle">😊 Стикеры</h2>
     <div id="stickerContent"><div class="empty">Загрузка...</div></div>
+    <button class="btn" onclick="showMyStickerPacks()" style="margin-top:8px">➕ Мои паки</button>
     <button class="close-btn" onclick="closeStickerModal()">Закрыть</button>
   </div>
 </div>
@@ -1356,6 +1368,15 @@ var searchResults=[],searchIndex=0;
 var currentMediaTab='all',cachedMedia=[];
 var replyToMsg=null;
 var typingTimeout=null;
+var callSocket=null, callPeer=null, callLocalStream=null, callRemoteStream=null, activeCallUser=null, activeCallVideo=false;
+try {
+    callSocket = io({auth:{token:T}});
+    callSocket.on('incoming-call', handleIncomingCall);
+    callSocket.on('call-answered', async function(d){ if(callPeer && d.answer){ await callPeer.setRemoteDescription(new RTCSessionDescription(d.answer)); } });
+    callSocket.on('ice-candidate', async function(d){ if(callPeer && d.candidate){ try{ await callPeer.addIceCandidate(new RTCIceCandidate(d.candidate)); }catch(e){} } });
+    callSocket.on('call-rejected', function(){ endCallUI('Звонок отклонён'); });
+    callSocket.on('call-ended', function(){ endCallUI('Звонок завершён'); });
+} catch(e) {}
 
 // ===== НОВЫЕ ПЕРЕМЕННЫЕ =====
 var isRecording = false;
@@ -1373,6 +1394,73 @@ if(isTemp){
 }
 
 fetch('/stickers/packs.json').then(function(r){return r.json()}).then(function(d){stickerPacks=d.packs||[]}).catch(function(){});
+
+
+function showCallUI(videoMode, outgoing, name) {
+    var old=document.getElementById('callOverlay'); if(old)old.remove();
+    var el=document.createElement('div'); el.id='callOverlay'; el.className='call-overlay';
+    el.innerHTML='<div class="call-window"><div class="call-title">'+(outgoing?'Звонок':'Входящий звонок')+' · '+(name||'Пользователь')+'</div>'+
+      '<div class="call-videos">'+(videoMode?'<video id="callRemoteVideo" autoplay playsinline></video><video id="callLocalVideo" autoplay muted playsinline></video>':'<div class="call-avatar">📞</div>')+'</div>'+
+      '<div class="call-status" id="callStatus">'+(outgoing?'Соединение...':'Входящий вызов...')+'</div>'+
+      '<div class="call-actions">'+(outgoing?'':'<button class="btn btn-green" id="acceptCallBtn">Принять</button>')+
+      '<button class="btn btn-red" id="endCallBtn">'+(outgoing?'Завершить':'Отклонить')+'</button></div></div>';
+    document.body.appendChild(el);
+    document.getElementById('endCallBtn').onclick=function(){ rejectOrEndCall(); };
+}
+async function createPeer(to, videoMode) {
+    var pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    callPeer=pc; activeCallUser=Number(to); activeCallVideo=!!videoMode;
+    pc.onicecandidate=function(e){if(e.candidate&&callSocket)callSocket.emit('ice-candidate',{to:activeCallUser,candidate:e.candidate});};
+    pc.ontrack=function(e){
+        callRemoteStream=e.streams[0];
+        var v=document.getElementById('callRemoteVideo');
+        if(v)v.srcObject=callRemoteStream;
+    };
+    callLocalStream=await navigator.mediaDevices.getUserMedia({audio:true,video:!!videoMode});
+    callLocalStream.getTracks().forEach(function(t){pc.addTrack(t,callLocalStream);});
+    var lv=document.getElementById('callLocalVideo'); if(lv)lv.srcObject=callLocalStream;
+    return pc;
+}
+async function startCall(userId, videoMode) {
+    try {
+        showCallUI(!!videoMode,true,ct&&ct.name);
+        var pc=await createPeer(userId,videoMode);
+        var offer=await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        callSocket.emit('call-user',{to:userId,offer:offer,video:!!videoMode,callerName:U.username});
+        var s=document.getElementById('callStatus');if(s)s.textContent='Ожидание ответа...';
+    } catch(e) {
+        console.error(e); endCallUI('Не удалось начать звонок: '+(e.message||'доступ к микрофону/камере запрещён'));
+    }
+}
+function handleIncomingCall(data) {
+    if(activeCallUser) return;
+    activeCallUser=Number(data.from); activeCallVideo=!!data.video;
+    showCallUI(activeCallVideo,false,data.callerName);
+    var accept=document.getElementById('acceptCallBtn');
+    if(accept) accept.onclick=async function(){
+        try {
+            accept.disabled=true;
+            var pc=await createPeer(activeCallUser,activeCallVideo);
+            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            var answer=await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            callSocket.emit('call-answer',{to:activeCallUser,answer:answer});
+            var s=document.getElementById('callStatus');if(s)s.textContent='Соединение...';
+        } catch(e) { rejectOrEndCall(); }
+    };
+}
+function rejectOrEndCall(){
+    if(callSocket&&activeCallUser)callSocket.emit('call-end',{to:activeCallUser});
+    endCallUI('Звонок завершён');
+}
+function endCallUI(status){
+    if(callPeer){try{callPeer.close()}catch(e){}}
+    if(callLocalStream)callLocalStream.getTracks().forEach(function(t){t.stop()});
+    callPeer=null;callLocalStream=null;callRemoteStream=null;activeCallUser=null;
+    var el=document.getElementById('callOverlay');
+    if(el){var s=el.querySelector('.call-status');if(s)s.textContent=status||'Звонок завершён';setTimeout(function(){if(el.parentNode)el.remove()},500);}
+}
 
 // ===== ОНЛАЙН СТАТУС =====
 function updateOnlineStatus() {
@@ -1437,6 +1525,7 @@ api('/api/check-file-access').then(function(r){return r.json()}).then(function(d
     if(hasFileAccess || isAdmin) tabsHtml += '<div class="tab" data-t="files" onclick="st(\'files\',this)">Файлы</div>';
     tabsHtml += '<div class="tab active" data-t="users" onclick="st(\'users\',this)">Пользователи</div>';
     tabsHtml += '<div class="tab" data-t="friends" onclick="st(\'friends\',this)">Друзья<span class="badge" id="rb" style="display:none">0</span></div>';
+    tabsHtml += '<div class="tab" data-t="groups" onclick="st(\'groups\',this)">Группы</div>';
     tabsHtml += '<div class="tab" data-t="chats" onclick="st(\'chats\',this)">Чаты<span class="badge" id="mb" style="display:none">0</span></div>';
     if(isAdmin) tabsHtml += '<div class="tab" data-t="admin" onclick="st(\'admin\',this)" style="background:var(--orange-bg);color:var(--orange);border-color:var(--orange-border)">⚙️ Админ</div>';
     document.getElementById('tabsContainer').innerHTML = tabsHtml;
@@ -1524,7 +1613,7 @@ function st(tab,el){
     if(tab!=='chats'){ct=null;if(ti){clearInterval(ti);ti=null};closeChatFullscreen()}
     document.querySelectorAll('#tabsContainer .tab').forEach(function(x){x.classList.remove('active')});
     if(el)el.classList.add('active');
-    if(tab==='files')lf();else if(tab==='users')lu();else if(tab==='friends')lfr();else if(tab==='chats')lcl();
+    if(tab==='files')lf();else if(tab==='users')lu();else if(tab==='friends')lfr();else if(tab==='groups')lgroups();else if(tab==='chats')lcl();
 }
 
 function ol(url,type,msgId,isSelfDestruct){
@@ -1728,6 +1817,82 @@ function ac(id){api('/api/friends/accept/'+id,{method:'POST'}).then(lfr)}
 function rj(id){api('/api/friends/reject/'+id,{method:'POST'}).then(lfr)}
 function df(id){if(!confirm('Удалить?'))return;api('/api/friends/'+id,{method:'DELETE'}).then(lfr)}
 
+
+function lgroups(){
+    closeChatFullscreen();
+    api('/api/groups').then(function(r){return r.json()}).then(function(d){
+        var groups=d.groups||[], h='<div class="panel"><h2>👥 Мои группы</h2><button class="btn" onclick="showCreateGroup()">＋ Создать группу</button></div>';
+        h+='<div class="panel"><div class="user-list">';
+        if(groups.length) groups.forEach(function(g){
+            h+='<div class="user-item"><div class="user-info"><div class="avatar-sm">👥</div><div><b>'+escapeHtml(g.name)+'</b><div style="font-size:9px;color:var(--text-muted)">'+g.member_count+' участников</div></div></div><button class="btn" onclick="openGroup('+g.id+')">Открыть</button></div>';
+        }); else h+='<div class="empty">Групп пока нет</div>';
+        h+='</div></div>'; document.getElementById('tc').innerHTML=h;
+    }).catch(function(){document.getElementById('tc').innerHTML='<div class="empty">Не удалось загрузить группы</div>';});
+}
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]});}
+function showCreateGroup(){
+    api('/api/friends').then(function(r){return r.json()}).then(function(d){
+        var friends=d.friends||[];
+        var h='<div class="panel"><h2>Создание группы</h2><input id="newGroupName" class="text-input" placeholder="Название группы" maxlength="80">';
+        h+='<p style="font-size:10px;color:var(--text-muted);margin:12px 0 6px">Выберите друзей</p><div class="user-list">';
+        friends.forEach(function(f){h+='<label class="user-item" style="cursor:pointer"><span class="user-info"><span class="avatar-sm">'+av(f.avatar)+'</span><span>'+escapeHtml(f.username)+'</span></span><input type="checkbox" class="group-friend" value="'+f.id+'"></label>';});
+        if(!friends.length)h+='<div class="empty">Сначала добавьте друзей</div>';
+        h+='</div><div style="margin-top:12px"><button class="btn" onclick="createGroupFromUI()">Создать</button><button class="btn btn-gray" onclick="lgroups()">Отмена</button></div></div>';
+        document.getElementById('tc').innerHTML=h;
+    });
+}
+function createGroupFromUI(){
+    var name=(document.getElementById('newGroupName')||{}).value||'';
+    var ids=Array.prototype.map.call(document.querySelectorAll('.group-friend:checked'),function(x){return Number(x.value)});
+    api('/api/groups',{method:'POST',body:{name:name,member_ids:ids}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка');return d;})}).then(lgroups).catch(function(e){alert(e.message);});
+}
+function openGroup(gid){
+    api('/api/groups/'+gid).then(function(r){return r.json()}).then(function(d){
+        if(!d.group)return;
+        ct={id:gid,name:d.group.name,avatar:d.group.avatar,group:true};
+        document.getElementById('tc').style.display='none';document.body.classList.add('chat-open');
+        var fs=document.createElement('div');fs.className='chat-fullscreen';fs.id='chatFullscreen';
+        fs.innerHTML='<div class="chat-panel"><div class="chat-header"><div class="avatar-sm">👥</div><div><h2>'+escapeHtml(d.group.name)+'</h2><div style="font-size:9px;color:var(--text-muted)">'+d.members.length+' участников</div></div><button class="btn btn-gray" onclick="showGroupMembers('+gid+')">👥</button><button class="btn btn-gray" onclick="closeChatFullscreen()">← Назад</button></div><div class="chat-container"><div class="chat-messages" id="cm"><div class="empty">Загрузка...</div></div><div class="chat-input-area"><input type="text" id="mi" placeholder="Сообщение..."><input type="file" id="cf" style="display:none"><button class="icon-btn" id="ab">📎</button><button class="btn" id="sb">Отпр.</button></div></div></div>';
+        document.body.appendChild(fs);
+        document.getElementById('ab').onclick=function(){document.getElementById('cf').click();};
+        document.getElementById('sb').onclick=function(){sendGroupMessage(gid);};
+        document.getElementById('mi').onkeypress=function(e){if(e.key==='Enter')sendGroupMessage(gid);};
+        lgroupMessages(gid);ti=setInterval(function(){lgroupMessages(gid,true)},2500);
+    });
+}
+function lgroupMessages(gid,silent){
+    api('/api/groups/'+gid+'/messages').then(function(r){return r.json()}).then(function(d){
+        var c=document.getElementById('cm');if(!c)return;
+        var old=c.scrollHeight-c.scrollTop-c.clientHeight<80,h='';
+        (d.messages||[]).forEach(function(m){
+            var sent=Number(m.sender_id)===Number(U.id), body='';
+            if(m.file_path){
+                var url=m.file_path;
+                if(m.file_type&&m.file_type.startsWith('image/'))body+='<img class="msg-img" src="'+url+'">';
+                else if(m.file_type&&m.file_type.startsWith('video/'))body+='<div class="video-circle" style="width:130px;height:130px" onclick="this.querySelector(&quot;video&quot;).play()"><video src="'+url+'" playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;border-radius:50%"></video></div>';
+                else body+='<div class="file-box" data-url="'+escapeHtml(url)+'" onclick="window.open(this.dataset.url)">📄 '+escapeHtml(m.file_name||'Файл')+'</div>';
+            }
+            if(m.message_text)body+='<div>'+escapeHtml(m.message_text)+'</div>';
+            h+='<div class="msg '+(sent?'sent':'received')+'">'+(!sent?'<div class="msg-username">'+escapeHtml(m.username)+'</div>':'')+body+'<div class="time">'+new Date(m.created_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})+'</div></div>';
+        });
+        c.innerHTML=h||'<div class="empty">Нет сообщений</div>';if(old)c.scrollTop=c.scrollHeight;
+    }).catch(function(){});
+}
+async function sendGroupMessage(gid){
+    var inp=document.getElementById('mi'),fi=document.getElementById('cf'),text=(inp.value||'').trim(),file=fi.files[0];
+    if(!text&&!file)return;
+    var fd=new FormData();if(text)fd.append('message_text',text);if(file){fd.append('file',file);if(file.type.startsWith('video/'))fd.append('media_kind','video');else if(file.type.startsWith('image/'))fd.append('media_kind','image');else if(file.type.startsWith('audio/'))fd.append('media_kind','audio');}
+    try{var r=await api('/api/groups/'+gid+'/messages',{method:'POST',body:fd});var d=await r.json();if(!r.ok)throw new Error(d.error||'Ошибка');inp.value='';fi.value='';lgroupMessages(gid);}catch(e){alert(e.message);}
+}
+function showGroupMembers(gid){
+    api('/api/groups/'+gid).then(function(r){return r.json()}).then(function(d){
+        var lines=(d.members||[]).map(function(m){return m.username+' (ID '+m.id+')'+(m.role==='owner'?' — создатель':'');}).join('\\n');
+        var id=prompt('Участники:\\n'+lines+'\\n\\nВведите ID друга, которого нужно добавить:');
+        if(!id)return;
+        api('/api/groups/'+gid+'/members',{method:'POST',body:{user_id:Number(id)}}).then(function(r){return r.json()}).then(function(x){if(!x.ok)throw new Error(x.error||'Ошибка');openGroup(gid);}).catch(function(e){alert(e.message);});
+    });
+}
+
 function lcl(){
     ct=null;if(ti){clearInterval(ti);ti=null}pastedFiles=[];cachedMessages={};selfDestructMode=false;photoSendMode=null;closeChatFullscreen();
     api('/api/friends').then(function(r){return r.json()}).then(function(d){
@@ -1758,6 +1923,8 @@ function oc(id,name,avatar){
     '<div class="chat-status" style="font-size:9px;color:var(--text-muted);margin-top:-2px">загрузка...</div></div>'+
     '<button class="btn btn-gray" onclick="showPinned('+id+')" style="font-size:9px;padding:4px 8px" title="Закреплённые"><span class="chat-icon">'+uiIcon('pin')+'</span></button>'+
     '<button class="btn btn-gray" onclick="openMediaModal('+id+')" style="font-size:9px;padding:4px 8px" title="Медиа"><span class="chat-icon">'+uiIcon('image')+'</span></button>'+
+    '<button class="btn btn-gray" onclick="startCall(id,false)" style="font-size:9px;padding:4px 8px" title="Аудиозвонок">📞</button>'+
+    '<button class="btn btn-gray" onclick="startCall(id,true)" style="font-size:9px;padding:4px 8px" title="Видеозвонок">🎥</button>'+
     '<button class="btn btn-gray" onclick="toggleSearch()" style="font-size:9px;padding:4px 8px" title="Поиск"><span class="chat-icon">'+uiIcon('search')+'</span></button>'+
     '<button class="btn btn-gray" onclick="closeChatFullscreen()" style="font-size:9px;padding:4px 10px">← Назад</button>'+
     '</div>'+
@@ -2611,69 +2778,17 @@ function attachMsgEvents(el, msg) {
 
 // ===== ФУНКЦИЯ СОЗДАНИЯ ВИДЕО-КРУЖКА =====
 function createVideoElement(videoData) {
-    var wrapper = document.createElement('div');
-    wrapper.className = 'video-wrapper';
-    
-    var circle = document.createElement('div');
-    circle.className = 'video-circle';
-    
-    var video = document.createElement('video');
-    
-    var videoUrl = videoData.url || videoData.file_path || videoData;
-    if (videoUrl && !videoUrl.startsWith('http') && !videoUrl.startsWith('/')) {
-        videoUrl = '/' + videoUrl;
-    }
-    video.src = videoUrl;
-    video.muted = true;
-    video.loop = false;
-    video.playsInline = true;
-    video.setAttribute('playsinline', '');
-    video.preload = 'metadata';
-    
-    video.style.width = '100%';
-    video.style.height = '100%';
-    video.style.objectFit = 'cover';
-    video.style.borderRadius = '50%';
-    
-    circle.addEventListener('mouseenter', function() {
-        video.play().catch(function() {});
-    });
-    
-    circle.addEventListener('mouseleave', function() {
-        video.pause();
-    });
-    
-    circle.addEventListener('click', function(e) {
-        e.stopPropagation();
-        if (video.paused) {
-            video.play().catch(function() {});
-        } else {
-            video.pause();
-        }
-    });
-    
-    circle.addEventListener('dblclick', function(e) {
-        e.stopPropagation();
-        openVideoFullscreen(videoUrl, videoData.file_type || 'video/mp4');
-    });
-    
-    if (videoData.duration && Number(videoData.duration) > 0) {
-        var knownDuration = document.createElement('div');
-        knownDuration.className = 'duration';
-        knownDuration.textContent = formatDuration(videoData.duration);
-        circle.appendChild(knownDuration);
-    }
-    
-    var overlay = document.createElement('div');
-    overlay.className = 'play-overlay';
-    overlay.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>';
-    
-    circle.appendChild(overlay);
-    circle.appendChild(video);
-    wrapper.appendChild(circle);
-    
-    return wrapper;
+    var url=videoData.url||videoData.file_path||'';
+    var type=videoData.file_type||'video/mp4';
+    var dur=videoData.duration&&Number(videoData.duration)>0?'<div class="duration">'+formatDuration(videoData.duration)+'</div>':'';
+    var safeUrl=String(url).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    return '<div class="video-wrapper"><div class="video-circle" onclick="event.stopPropagation();toggleCircleVideo(this)" ondblclick="event.stopPropagation();openVideoFullscreen(\''+String(url).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\',\''+String(type).replace(/'/g,"\\'")+'\')"><video src="'+safeUrl+'" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;border-radius:50%"></video><div class="play-overlay"><svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg></div>'+dur+'</div></div>';
 }
+function toggleCircleVideo(circle){
+    var video=circle.querySelector('video');if(!video)return;
+    if(video.paused)video.play().catch(function(){});else video.pause();
+}
+
 
 // ===== ОТКРЫТИЕ ВИДЕО В ПОЛНОЭКРАННОМ РЕЖИМЕ =====
 function openVideoFullscreen(url, type) {
@@ -2730,8 +2845,7 @@ function lm(id,silent,callback){
                         duration: m.duration_seconds || null,
                         message_id: m.id
                     };
-                    var videoEl = createVideoElement(videoData);
-                    con += videoEl.outerHTML;
+                    con += createVideoElement(videoData);
                 }else if(m.file_type&&m.file_type.startsWith('audio/')){
                     con+='<div class="msg-audio-container" data-media-url="'+m.file_path+'" data-media-id="'+m.id+'"><button class="msg-audio-play" onclick="event.stopPropagation();playAudio(this,\''+m.file_path+'\')">▶</button><div class="msg-audio-wave" onclick="event.stopPropagation();playAudio(this.parentElement.querySelector(\'.msg-audio-play\'),\''+m.file_path+'\')">' +
                            '<div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>' +
@@ -3313,22 +3427,23 @@ function closeStickerModal(){
 function showStickerPacks(){
     currentStickerPack=null;
     document.getElementById('stickerModalTitle').textContent='😊 Стикеры';
-    if(!stickerPacks.length){ document.getElementById('stickerContent').innerHTML='<div class="empty">Стикеры не найдены. Создайте папки в public/stickers/</div>'; return; }
     var html='<div class="sticker-packs-grid">';
-    stickerPacks.forEach(function(pack){
+    if(stickerPacks.length){
+      stickerPacks.forEach(function(pack){
         var icon='🟢';
-        if(pack.id==='shrek')icon='🟢';
-        else if(pack.id==='deadpool')icon='🔴';
-        else if(pack.id==='deadpool-marvel')icon='🟡';
-        else if(pack.id==='cat')icon='🐱';
-        else if(pack.id==='horimiya')icon='🌸';
-        html+='<div class="sticker-pack-card" onclick="openStickerPack(\''+pack.id+'\',\''+pack.name+'\')">';
-        html+='<div class="pack-icon">'+icon+'</div>';
-        html+='<div class="pack-name">'+pack.name+'</div>';
-        html+='</div>';
-    });
-    html+='</div>';
+        if(pack.id==='deadpool')icon='🔴'; else if(pack.id==='deadpool-marvel')icon='🟡'; else if(pack.id==='cat')icon='🐱'; else if(pack.id==='horimiya')icon='🌸';
+        html+='<div class="sticker-pack-card" onclick="openStickerPack(\''+pack.id+'\',\''+escapeHtml(pack.name)+'\')"><div class="pack-icon">'+icon+'</div><div class="pack-name">'+escapeHtml(pack.name)+'</div></div>';
+      });
+    }
+    html+='</div><div id="myStickerPacksPreview" style="margin-top:10px"></div>';
     document.getElementById('stickerContent').innerHTML=html;
+    api('/api/sticker-packs').then(function(r){return r.json()}).then(function(d){
+      var packs=d.packs||[],box=document.getElementById('myStickerPacksPreview');
+      if(!box||!packs.length)return;
+      var h='<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">Ваши паки</div><div class="sticker-packs-grid">';
+      packs.forEach(function(p){h+='<div class="sticker-pack-card" onclick="openMyStickerPack('+p.id+',\''+escapeHtml(p.name)+'\')"><div class="pack-icon">⭐</div><div class="pack-name">'+escapeHtml(p.name)+'</div></div>';});
+      h+='</div>';box.innerHTML=h;
+    }).catch(function(){});
 }
 
 function openStickerPack(packId,packName){
@@ -3341,6 +3456,31 @@ function openStickerPack(packId,packName){
         else { html+='<div class="sticker-grid">'; stickers.forEach(function(s){ html+='<div class="sticker-item" onclick="sendSticker(\'/stickers/'+packId+'/'+s+'\',\''+s+'\')"><img src="/stickers/'+packId+'/'+s+'" loading="lazy" alt=""></div>'; }); html+='</div>'; }
         document.getElementById('stickerContent').innerHTML=html;
     }).catch(function(){ document.getElementById('stickerContent').innerHTML='<button class="sticker-back-btn" onclick="showStickerPacks()">← Назад к пакам</button><div class="empty">Ошибка загрузки</div>'; });
+}
+
+
+function showMyStickerPacks(){
+    var name=prompt('Название нового пака:');
+    if(!name)return;
+    var input=document.createElement('input');input.type='file';input.accept='image/png,image/webp,image/gif,image/jpeg';input.multiple=true;
+    input.onchange=function(){
+      if(!input.files.length)return;
+      var fd=new FormData();fd.append('name',name);
+      for(var i=0;i<input.files.length;i++)fd.append('stickers',input.files[i],input.files[i].name);
+      api('/api/sticker-packs',{method:'POST',body:fd}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка');return d;})}).then(function(){showStickerPacks();}).catch(function(e){alert(e.message);});
+    };input.click();
+}
+function openMyStickerPack(packId,packName){
+    document.getElementById('stickerModalTitle').textContent=packName;
+    api('/api/sticker-packs/'+packId).then(function(r){return r.json()}).then(function(d){
+      var h='<button class="sticker-back-btn" onclick="showStickerPacks()">← Назад</button><div class="sticker-grid">';
+      (d.stickers||[]).forEach(function(s){h+='<div class="sticker-item" onclick="sendMySticker(\''+s.file_url.replace(/'/g,"\\'")+'\',\''+escapeHtml(s.file_name)+'\')"><img src="'+s.file_url+'" loading="lazy"></div>';});
+      h+='</div>';document.getElementById('stickerContent').innerHTML=h;
+    });
+}
+function sendMySticker(url,name){
+    if(!ct||ct.group)return;
+    api('/api/messages/'+ct.id+'/sticker',{method:'POST',body:{url:url,name:name}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка');return d;})}).then(function(){closeStickerModal();lm(ct.id);}).catch(function(e){alert(e.message);});
 }
 
 function sendSticker(stickerUrl,stickerName){

@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
+const { Server: SocketIOServer } = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -51,8 +53,9 @@ const cloudinaryStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: function(req, file) {
     const isAvatar = req.path === '/api/avatar' || req.path === '/api/register';
+    const isSticker = req.path === '/api/sticker-packs';
     const options = {
-      folder: isAvatar ? 'vero_avatars' : 'vero_messenger',
+      folder: isAvatar ? 'vero_avatars' : (isSticker ? 'vero_stickers' : 'vero_messenger'),
       resource_type: isAvatar ? 'image' : 'auto'
     };
     if (isAvatar) options.transformation = [{ width: 200, height: 200, crop: 'limit' }];
@@ -227,6 +230,63 @@ async function startDB() {
     )
   `);
 
+
+  await dbRun(`
+    CREATE TABLE IF NOT EXISTS groups (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      avatar TEXT DEFAULT NULL,
+      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await dbRun(`
+    CREATE TABLE IF NOT EXISTS group_members (
+      group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT DEFAULT 'member',
+      joined_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (group_id, user_id)
+    )
+  `);
+
+  await dbRun(`
+    CREATE TABLE IF NOT EXISTS group_messages (
+      id SERIAL PRIMARY KEY,
+      group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
+      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      message_text TEXT,
+      file_name TEXT,
+      file_type TEXT,
+      file_path TEXT,
+      file_size BIGINT DEFAULT 0,
+      duration_seconds DOUBLE PRECISION DEFAULT NULL,
+      media_kind TEXT DEFAULT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await dbRun(`
+    CREATE TABLE IF NOT EXISTS sticker_packs (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      cover_url TEXT DEFAULT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await dbRun(`
+    CREATE TABLE IF NOT EXISTS user_stickers (
+      id SERIAL PRIMARY KEY,
+      pack_id INTEGER REFERENCES sticker_packs(id) ON DELETE CASCADE,
+      file_url TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   const migrations = [
     "ALTER TABLE messages ADD COLUMN IF NOT EXISTS duration_seconds DOUBLE PRECISION DEFAULT NULL",
     "ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_kind TEXT DEFAULT NULL",
@@ -234,7 +294,10 @@ async function startDB() {
     "CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(sender_id, receiver_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_messages_receiver_read ON messages(receiver_id, is_read)",
     "CREATE INDEX IF NOT EXISTS idx_friends_users ON friends(from_user, to_user, status)",
-    "CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id)"
+    "CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id)",
+    "CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id, group_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sticker_packs_user ON sticker_packs(user_id)"
   ];
   for (const migration of migrations) {
     try { await dbRun(migration); } catch (e) { console.warn('⚠️ Миграция:', e.message); }
@@ -914,6 +977,153 @@ app.get('/api/pinned/private/:fid', auth, async function(req, res) {
   res.json({ pinned: pinned });
 });
 
+
+
+app.post('/api/messages/:fid/sticker', auth, async function(req,res){
+  try {
+    const fid=Number(req.params.fid), url=String(req.body.url||''), name=String(req.body.name||'sticker');
+    if(!url || !/^https?:\/\//i.test(url)) return res.status(400).json({error:'Некорректный стикер'});
+    const friend=await dbGet(`SELECT 1 FROM friends WHERE status='accepted' AND ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?))`,[req.userId,fid,fid,req.userId]);
+    if(!friend)return res.status(403).json({error:'Пользователь не является другом'});
+    await dbRun('INSERT INTO messages (sender_id,receiver_id,file_name,file_type,file_path,file_size,media_kind) VALUES (?,?,?,?,?,?,?)',[req.userId,fid,name,'image/png',url,0,'image']);
+    res.json({ok:true});
+  } catch(e){res.status(500).json({error:'Не удалось отправить стикер'});}
+});
+
+// ===== ГРУППЫ =====
+async function isGroupMember(groupId, userId) {
+  return !!(await dbGet('SELECT 1 FROM group_members WHERE group_id=? AND user_id=?', [groupId, userId]));
+}
+
+app.get('/api/groups', auth, async function(req, res) {
+  const groups = await dbAll(`
+    SELECT g.id, g.name, g.avatar, g.owner_id,
+           (SELECT COUNT(*) FROM group_members gm2 WHERE gm2.group_id=g.id) AS member_count
+    FROM groups g
+    JOIN group_members gm ON gm.group_id=g.id
+    WHERE gm.user_id=?
+    ORDER BY g.created_at DESC
+  `, [req.userId]);
+  res.json({ groups: groups });
+});
+
+app.post('/api/groups', auth, async function(req, res) {
+  try {
+    const name = String(req.body.name || '').trim();
+    const memberIds = Array.isArray(req.body.member_ids) ? req.body.member_ids.map(Number).filter(Number.isInteger) : [];
+    if (name.length < 2 || name.length > 80) return res.status(400).json({ error: 'Название группы: от 2 до 80 символов' });
+    const group = await dbGet('INSERT INTO groups (name, owner_id) VALUES (?, ?) RETURNING *', [name, req.userId]);
+    await dbRun('INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)', [group.id, req.userId, 'owner']);
+    for (const uid of [...new Set(memberIds)]) {
+      if (uid === req.userId) continue;
+      const friend = await dbGet(`SELECT 1 FROM friends WHERE status='accepted' AND ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?))`, [req.userId, uid, uid, req.userId]);
+      if (friend) await dbRun('INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?) ON CONFLICT DO NOTHING', [group.id, uid, 'member']);
+    }
+    res.json({ ok: true, group: group });
+  } catch (e) {
+    console.error('Ошибка создания группы:', e);
+    res.status(500).json({ error: 'Не удалось создать группу' });
+  }
+});
+
+app.get('/api/groups/:id', auth, async function(req, res) {
+  const gid = Number(req.params.id);
+  if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа к группе' });
+  const group = await dbGet('SELECT * FROM groups WHERE id=?', [gid]);
+  const members = await dbAll(`SELECT u.id,u.username,u.avatar,gm.role,gm.joined_at FROM group_members gm JOIN users u ON u.id=gm.user_id WHERE gm.group_id=? ORDER BY gm.role='owner' DESC,u.username`, [gid]);
+  res.json({ group: group, members: members });
+});
+
+app.post('/api/groups/:id/members', auth, async function(req, res) {
+  const gid = Number(req.params.id);
+  const group = await dbGet('SELECT * FROM groups WHERE id=?', [gid]);
+  const me = await dbGet('SELECT role FROM group_members WHERE group_id=? AND user_id=?', [gid, req.userId]);
+  const uid = Number(req.body.user_id);
+  if (!group || !me) return res.status(403).json({ error: 'Нет доступа' });
+  if (me.role !== 'owner') return res.status(403).json({ error: 'Добавлять участников может создатель группы' });
+  const friend = await dbGet(`SELECT 1 FROM friends WHERE status='accepted' AND ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?))`, [req.userId, uid, uid, req.userId]);
+  if (!friend && uid !== req.userId) return res.status(400).json({ error: 'Сначала добавьте пользователя в друзья' });
+  await dbRun('INSERT INTO group_members (group_id,user_id,role) VALUES (?,?,?) ON CONFLICT DO NOTHING', [gid, uid, 'member']);
+  res.json({ ok: true });
+});
+
+app.delete('/api/groups/:id/members/:uid', auth, async function(req, res) {
+  const gid = Number(req.params.id), uid = Number(req.params.uid);
+  const me = await dbGet('SELECT role FROM group_members WHERE group_id=? AND user_id=?', [gid, req.userId]);
+  if (!me || me.role !== 'owner') return res.status(403).json({ error: 'Недостаточно прав' });
+  if (uid === req.userId) return res.status(400).json({ error: 'Создатель не может удалить себя' });
+  await dbRun('DELETE FROM group_members WHERE group_id=? AND user_id=?', [gid, uid]);
+  res.json({ ok: true });
+});
+
+app.delete('/api/groups/:id', auth, async function(req, res) {
+  const gid = Number(req.params.id);
+  const group = await dbGet('SELECT * FROM groups WHERE id=? AND owner_id=?', [gid, req.userId]);
+  if (!group) return res.status(403).json({ error: 'Удалить группу может только создатель' });
+  await dbRun('DELETE FROM groups WHERE id=?', [gid]);
+  res.json({ ok: true });
+});
+
+app.get('/api/groups/:id/messages', auth, async function(req, res) {
+  const gid = Number(req.params.id);
+  if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
+  const messages = await dbAll(`SELECT gm.*,u.username,u.avatar FROM group_messages gm JOIN users u ON u.id=gm.sender_id WHERE gm.group_id=? ORDER BY gm.created_at ASC`, [gid]);
+  res.json({ messages: messages });
+});
+
+app.post('/api/groups/:id/messages', auth, upload.single('file'), async function(req, res) {
+  try {
+    const gid = Number(req.params.id);
+    if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
+    const text = String(req.body.message_text || '').trim() || null;
+    let fileName=null,fileType=null,filePath=null,fileSize=0,duration=req.body.duration_seconds ? Number(req.body.duration_seconds) : null,kind=req.body.media_kind||null;
+    if (req.file) {
+      fileName=req.file.originalname; fileType=req.file.mimetype; filePath=req.file.path; fileSize=req.file.size||0;
+      kind=fileType.startsWith('video/')?'video':fileType.startsWith('audio/')?'audio':fileType.startsWith('image/')?'image':'file';
+    }
+    if (!text && !req.file) return res.status(400).json({error:'Пустое сообщение'});
+    const msg=await dbGet(`INSERT INTO group_messages (group_id,sender_id,message_text,file_name,file_type,file_path,file_size,duration_seconds,media_kind) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id`, [gid,req.userId,text,fileName,fileType,filePath,fileSize,duration,kind]);
+    res.json({ok:true,id:msg.id});
+  } catch(e) {
+    console.error('Ошибка сообщения группы:',e);
+    res.status(500).json({error:e.message||'Ошибка отправки'});
+  }
+});
+
+// ===== ПОЛЬЗОВАТЕЛЬСКИЕ ПАКИ СТИКЕРОВ =====
+app.get('/api/sticker-packs', auth, async function(req,res) {
+  const packs=await dbAll(`SELECT sp.id,sp.name,sp.cover_url,(SELECT COUNT(*) FROM user_stickers us WHERE us.pack_id=sp.id) AS sticker_count FROM sticker_packs sp WHERE sp.user_id=? ORDER BY sp.created_at DESC`,[req.userId]);
+  res.json({packs:packs});
+});
+
+app.post('/api/sticker-packs', auth, upload.array('stickers', 50), async function(req,res) {
+  try {
+    const name=String(req.body.name||'').trim();
+    if(name.length<2||name.length>60) return res.status(400).json({error:'Название пака: от 2 до 60 символов'});
+    if(!req.files||!req.files.length) return res.status(400).json({error:'Добавьте хотя бы один стикер'});
+    const first=req.files[0];
+    const pack=await dbGet('INSERT INTO sticker_packs (user_id,name,cover_url) VALUES (?,?,?) RETURNING *',[req.userId,name,first.path]);
+    for(const f of req.files) await dbRun('INSERT INTO user_stickers (pack_id,file_url,file_name) VALUES (?,?,?)',[pack.id,f.path,f.originalname]);
+    res.json({ok:true,pack:pack});
+  }catch(e){console.error('Ошибка пака:',e);res.status(500).json({error:e.message||'Не удалось создать пак'});}
+});
+
+app.get('/api/sticker-packs/:id', auth, async function(req,res) {
+  const pack=await dbGet('SELECT * FROM sticker_packs WHERE id=? AND user_id=?',[Number(req.params.id),req.userId]);
+  if(!pack) return res.status(404).json({error:'Пак не найден'});
+  const stickers=await dbAll('SELECT id,file_url,file_name FROM user_stickers WHERE pack_id=? ORDER BY id',[pack.id]);
+  res.json({pack:pack,stickers:stickers});
+});
+
+app.delete('/api/sticker-packs/:id', auth, async function(req,res) {
+  const pack=await dbGet('SELECT * FROM sticker_packs WHERE id=? AND user_id=?',[Number(req.params.id),req.userId]);
+  if(!pack) return res.status(404).json({error:'Пак не найден'});
+  const stickers=await dbAll('SELECT file_url FROM user_stickers WHERE pack_id=?',[pack.id]);
+  for(const s of stickers){ if(s.file_url && s.file_url.includes('cloudinary.com')) { try { await cloudinary.uploader.destroy(s.file_url); } catch(e){} } }
+  await dbRun('DELETE FROM sticker_packs WHERE id=?',[pack.id]);
+  res.json({ok:true});
+});
+
 // ===== ОБРАБОТЧИК ОШИБОК ЗАГРУЗКИ =====
 // Ошибки multer/Cloudinary возникают до тела route, поэтому без этого
 // обработчика браузер получал HTML вместо JSON и показывал просто «Ошибка».
@@ -975,10 +1185,58 @@ app.get('/register.html', async function(req, res) { res.sendFile(path.join(__di
 app.get('/dashboard.html', async function(req, res) { res.sendFile(path.join(__dirname, 'public', 'dashboard.html')); });
 
 // ===== ЗАПУСК =====
+const httpServer = http.createServer(app);
+const io = new SocketIOServer(httpServer, {
+  cors: { origin: true, credentials: true },
+  maxHttpBufferSize: 1e6
+});
+
+io.use(function(socket, next) {
+  try {
+    const token = socket.handshake.auth && socket.handshake.auth.token;
+    if (!token) return next(new Error('Не авторизован'));
+    const decoded = jwt.verify(token, JWT_SECRET);
+    socket.userId = Number(decoded.id);
+    next();
+  } catch (e) {
+    next(new Error('Недействительный токен'));
+  }
+});
+
+io.on('connection', function(socket) {
+  socket.join('user:' + socket.userId);
+  socket.on('call-user', function(data) {
+    const to = Number(data && data.to);
+    if (to) io.to('user:' + to).emit('incoming-call', {
+      from: socket.userId,
+      offer: data.offer,
+      video: !!data.video,
+      callerName: data.callerName || 'Пользователь'
+    });
+  });
+  socket.on('call-answer', function(data) {
+    const to = Number(data && data.to);
+    if (to) io.to('user:' + to).emit('call-answered', { from: socket.userId, answer: data.answer });
+  });
+  socket.on('ice-candidate', function(data) {
+    const to = Number(data && data.to);
+    if (to) io.to('user:' + to).emit('ice-candidate', { from: socket.userId, candidate: data.candidate });
+  });
+  socket.on('call-reject', function(data) {
+    const to = Number(data && data.to);
+    if (to) io.to('user:' + to).emit('call-rejected', { from: socket.userId });
+  });
+  socket.on('call-end', function(data) {
+    const to = Number(data && data.to);
+    if (to) io.to('user:' + to).emit('call-ended', { from: socket.userId });
+  });
+});
+
 startDB().then(function() {
-  app.listen(PORT, function() {
+  httpServer.listen(PORT, function() {
     console.log('🚀 Сервер запущен на port ' + PORT);
     console.log('📁 Cloudinary подключен: медиа хранятся вне Render');
+    console.log('📞 WebRTC signaling через Socket.IO включен');
   });
 }).catch(function(err) {
   console.error('❌ Не удалось запустить БД:', err);
