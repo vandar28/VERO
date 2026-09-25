@@ -11,3 +11,13 @@ CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(sender_id, receiver_id,
 CREATE INDEX IF NOT EXISTS idx_messages_receiver_read ON messages(receiver_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_friends_users ON friends(from_user, to_user, status);
 CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
+
+
+CREATE TABLE IF NOT EXISTS groups (id SERIAL PRIMARY KEY, name TEXT NOT NULL, avatar TEXT, owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, role TEXT DEFAULT 'member', joined_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (group_id, user_id));
+CREATE TABLE IF NOT EXISTS group_messages (id SERIAL PRIMARY KEY, group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE, sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE, message_text TEXT, file_name TEXT, file_type TEXT, file_path TEXT, file_size BIGINT DEFAULT 0, duration_seconds DOUBLE PRECISION, media_kind TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS sticker_packs (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, cover_url TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS user_stickers (id SERIAL PRIMARY KEY, pack_id INTEGER REFERENCES sticker_packs(id) ON DELETE CASCADE, file_url TEXT NOT NULL, file_name TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id, group_id);
+CREATE INDEX IF NOT EXISTS idx_sticker_packs_user ON sticker_packs(user_id);
