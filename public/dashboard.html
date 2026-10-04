@@ -1447,6 +1447,7 @@ try {
 // ===== НОВЫЕ ПЕРЕМЕННЫЕ =====
 var isRecording = false;
 var voiceRecorder = null;
+function messageCacheKey(){return ct&&ct.group?'group:'+ct.id:(ct?ct.id:'');}
 var voiceChunks = [];
 var chatFontSize = parseInt(localStorage.getItem('chatFontSize')) || 13;
 var chatMaxWidth = parseInt(localStorage.getItem('chatMaxWidth')) || 65;
@@ -1935,42 +1936,59 @@ function createGroupFromUI(){
 function openGroup(gid){
     api('/api/groups/'+gid).then(function(r){return r.json()}).then(function(d){
         if(!d.group)return;
+        if(ti){clearInterval(ti);ti=null}
+        pastedFiles=[];selectedMessages={};replyToMsg=null;cachedMessages['group:'+gid]=[];
         ct={id:gid,name:d.group.name,avatar:d.group.avatar,group:true};
         document.getElementById('tc').style.display='none';document.body.classList.add('chat-open');
         var fs=document.createElement('div');fs.className='chat-fullscreen';fs.id='chatFullscreen';
-        fs.innerHTML='<div class="chat-panel"><div class="chat-header"><div class="avatar-sm">👥</div><div><h2>'+escapeHtml(d.group.name)+'</h2><div style="font-size:9px;color:var(--text-muted)">'+d.members.length+' участников</div></div><button class="btn btn-gray" onclick="showGroupMembers('+gid+')">👥</button><button class="btn btn-gray" onclick="openSettings()" title="Настройки чата">🎨</button><button class="btn btn-gray" onclick="closeChatFullscreen()">← Назад</button></div><div class="chat-container"><div class="chat-messages" id="cm"><div class="empty">Загрузка...</div></div><div class="chat-input-area"><textarea id="mi" rows="1" maxlength="100000" placeholder="Сообщение..."></textarea><input type="file" id="cf" style="display:none"><button class="icon-btn" id="ab">📎</button><button class="btn" id="sb">Отпр.</button></div></div></div>';
+        fs.innerHTML='<div class="chat-panel"><div class="chat-header"><div class="avatar-sm">👥</div><div><h2>'+escapeHtml(d.group.name)+'</h2><div style="font-size:9px;color:var(--text-muted)">'+d.members.length+' участников</div></div><button class="btn btn-gray" onclick="showGroupMembers('+gid+')">👥</button><button class="btn btn-gray" onclick="openSettings()" title="Настройки чата">🎨</button><button class="btn btn-gray" onclick="closeChatFullscreen()">← Назад</button></div><div class="msg-actions-bar" id="msgActions"><span id="selectedCount" style="font-size:10px;color:var(--accent-light);font-weight:600">0</span> выделено <button class="btn btn-gray" onclick="clearSelection()">✕ Снять выделение</button></div><div class="chat-container"><div class="chat-messages" id="cm"><div class="empty">Загрузка...</div></div><div class="reply-indicator" id="replyIndicator"><div class="reply-content"><div class="reply-label">↩️ Ответ для <span class="reply-username"></span></div><div class="reply-text"></div></div><button class="reply-close" onclick="cancelReply()">✕</button></div><div class="recording-bar" id="recBar">⏺️ Запись... <span id="recTime">0:00</span></div><div class="chat-input-area"><textarea id="mi" rows="1" maxlength="100000" placeholder="Сообщение..."></textarea><input type="file" id="cf" style="display:none" multiple><button class="icon-btn" id="ab" title="Прикрепить"><span class="chat-icon">'+uiIcon('attach')+'</span></button><button class="icon-btn" id="stickerBtn" title="Стикеры"><span class="chat-icon">'+uiIcon('sticker')+'</span></button><button class="voice-btn" id="voiceBtn" title="Голосовое сообщение"><span class="chat-icon">'+uiIcon('mic')+'</span></button><button class="icon-btn" id="vidBtn" title="Видео"><span class="chat-icon">'+uiIcon('video')+'</span></button><button class="btn" id="sb" style="padding:6px 14px;font-size:10px">Отпр.</button></div></div></div>';
         document.body.appendChild(fs);
         getChatStyle().then(applyChatStyle);
         document.getElementById('ab').onclick=function(){document.getElementById('cf').click();};
-        document.getElementById('sb').onclick=function(){sendGroupMessage(gid);};
-        document.getElementById('mi').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendGroupMessage(gid);}});
+        document.getElementById('cf').onchange=function(e){var files=e.target.files||[];for(var i=0;i<files.length;i++)addPastedFile(files[i]);updatePastePreview();};
+        document.getElementById('sb').onclick=function(){if(pastedFiles.length>0)sendPastedFiles(gid);else sendGroupMessage(gid);};
+        document.getElementById('mi').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(pastedFiles.length>0)sendPastedFiles(gid);else sendGroupMessage(gid);}});
         setupMessageInputAutosize(document.getElementById('mi'));
-        lgroupMessages(gid);ti=setInterval(function(){lgroupMessages(gid,true)},2500);
+        var voiceBtn=document.getElementById('voiceBtn');if(voiceBtn)voiceBtn.onclick=toggleVoiceRecording;
+        var vidBtn=document.getElementById('vidBtn');if(vidBtn)vidBtn.onclick=function(){startRec('video');};
+        var stickerBtn=document.getElementById('stickerBtn');if(stickerBtn)stickerBtn.onclick=openStickerModal;
+        lgroupMessages(gid);ti=setInterval(function(){if(ct&&ct.group&&Number(ct.id)===Number(gid))lgroupMessages(gid,true)},2500);
     });
 }
-function lgroupMessages(gid,silent){
+function lgroupMessages(gid,silent,callback){
     api('/api/groups/'+gid+'/messages').then(function(r){return r.json()}).then(function(d){
         var c=document.getElementById('cm');if(!c)return;
+        var key='group:'+gid;cachedMessages[key]=d.messages||[];
         var old=c.scrollHeight-c.scrollTop-c.clientHeight<80,h='';
         (d.messages||[]).forEach(function(m){
-            var sent=Number(m.sender_id)===Number(U.id), body='';
+            var sent=Number(m.sender_id)===Number(U.id),body='',con='';
+            if(!sent)con+='<div class="msg-header"><div class="msg-avatar">'+av(m.avatar)+'</div><span class="msg-username">'+escapeHtml(m.username)+'</span></div>';
+            if(m.reply_to){var rt=m.reply_text||m.file_name||'Сообщение';if(rt.length>40)rt=rt.substring(0,40)+'...';con+='<div class="reply-preview" onclick="navigateToMessage(\''+m.reply_to+'\')"><span class="reply-preview-icon">↩️</span><span class="reply-preview-text"><span class="reply-preview-username">'+escapeHtml(m.reply_sender||'Пользователь')+'</span>: '+escapeHtml(rt)+'</span></div>';}
             if(m.file_path){
-                var url=m.file_path;
-                if(m.file_type&&m.file_type.startsWith('image/'))body+='<img class="msg-img" src="'+url+'">';
-                else if(m.file_type&&m.file_type.startsWith('video/'))body+='<div class="video-circle" style="width:130px;height:130px" onclick="this.querySelector(&quot;video&quot;).play()"><video src="'+url+'" playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;border-radius:50%"></video></div>';
-                else body+='<div class="file-box" data-url="'+escapeHtml(url)+'" onclick="window.open(this.dataset.url)">📄 '+escapeHtml(m.file_name||'Файл')+'</div>';
+                var src=String(m.file_path);
+                if(m.media_kind==='sticker'){con+='<div class="msg sticker-msg"><img src="'+escapeHtml(src)+'" loading="lazy" style="max-width:120px;max-height:120px"></div>';}
+                else if(m.file_type&&m.file_type.startsWith('image/'))con+='<img class="msg-img" src="'+escapeHtml(src)+'" loading="lazy" onclick="event.stopPropagation();ol(\''+src.replace(/'/g,"\\'")+'\',\''+String(m.file_type).replace(/'/g,"\\'")+'\')">';
+                else if(m.file_type&&m.file_type.startsWith('video/'))con+=createVideoElement({url:src,file_type:m.file_type,duration:m.duration_seconds,message_id:m.id});
+                else if(m.file_type&&m.file_type.startsWith('audio/'))con+='<div class="msg-audio-container" data-media-url="'+escapeHtml(src)+'" data-media-id="'+m.id+'"><button class="msg-audio-play" onclick="event.stopPropagation();playAudio(this,\''+src.replace(/'/g,"\\'")+'\')">▶</button><div class="msg-audio-wave" onclick="event.stopPropagation();playAudio(this.parentElement.querySelector(\'.msg-audio-play\'),\''+src.replace(/'/g,"\\'")+'\')"><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><span class="msg-audio-duration">'+(m.duration_seconds?formatDuration(m.duration_seconds):'0:00')+'</span></div>';
+                else con+='<div class="file-box" onclick="window.open(\''+src.replace(/'/g,"\\'")+'\')">📄 '+escapeHtml(m.file_name||'Файл')+'</div>';
             }
-            if(m.message_text)body+='<div>'+escapeHtml(m.message_text)+'</div>';
-            h+='<div class="msg '+(sent?'sent':'received')+'">'+(!sent?'<div class="msg-username">'+escapeHtml(m.username)+'</div>':'')+body+'<div class="time">'+new Date(m.created_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})+'</div></div>';
+            if(m.message_text)con+='<div>'+escapeHtml(m.message_text)+(m.edited_at?' <span style="font-size:8px;opacity:.5">изменено</span>':'')+'</div>';
+            var reacts='';if(m.reactions&&Object.keys(m.reactions).length){reacts+='<div class="msg-reactions">';Object.keys(m.reactions).slice(0,2).forEach(function(r){var users=m.reactions[r]||[];reacts+='<span class="reaction-badge'+(users.indexOf(U.id)>=0?' mine':'')+'" onclick="event.stopPropagation();addReaction(\''+m.id+'\',\''+r+'\')">'+r+'<span class="reaction-count">'+users.length+'</span></span>';});reacts+='</div>';}
+            h+='<div class="msg '+(sent?'sent':'received')+'" data-msg-id="'+m.id+'">'+con+reacts+'<div class="time">'+new Date(m.created_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})+'</div></div>';
         });
-        c.innerHTML=h||'<div class="empty">Нет сообщений</div>';if(old)c.scrollTop=c.scrollHeight;
-    }).catch(function(){});
+        c.innerHTML=h||'<div class="empty">Нет сообщений</div>';
+        c.querySelectorAll('.msg').forEach(function(el){var mid=el.getAttribute('data-msg-id'),msg=(d.messages||[]).find(function(x){return String(x.id)===String(mid)});if(msg)attachMsgEvents(el,msg);if(selectedMessages[mid]){el.classList.add('selected');if(!el.querySelector('.selected-checkmark')){var check=document.createElement('span');check.className='selected-checkmark';check.textContent='✓';el.appendChild(check);}}var vb=el.querySelector('.video-circle');if(vb){var v=vb.querySelector('video');if(v)v.addEventListener('loadedmetadata',function(){if(Number.isFinite(v.duration)&&v.duration>0){var b=vb.querySelector('.duration');if(b)b.textContent=formatDuration(v.duration);api('/api/groups/'+gid+'/messages/'+mid+'/media-duration',{method:'POST',body:{duration_seconds:v.duration}}).catch(function(){});}});}var ab=el.querySelector('.msg-audio-container');if(ab&&ab.querySelector('.msg-audio-duration').textContent==='0:00'){var a=new Audio();a.preload='metadata';a.src=ab.getAttribute('data-media-url');a.onloadedmetadata=function(){if(Number.isFinite(a.duration)&&a.duration>0){ab.querySelector('.msg-audio-duration').textContent=formatDuration(a.duration);api('/api/groups/'+gid+'/messages/'+mid+'/media-duration',{method:'POST',body:{duration_seconds:a.duration}}).catch(function(){})}};}});
+        if(old||!silent)c.scrollTop=c.scrollHeight;
+        if(callback)callback();
+    }).catch(function(e){console.error('Ошибка загрузки группы:',e);});
 }
 async function sendGroupMessage(gid){
-    var inp=document.getElementById('mi'),fi=document.getElementById('cf'),text=(inp.value||'').trim(),file=fi.files[0];
+    var inp=document.getElementById('mi'),fi=document.getElementById('cf'),text=inp?String(inp.value||'').trim():'',file=fi&&fi.files?fi.files[0]:null;
     if(!text&&!file)return;
-    var fd=new FormData();if(text)fd.append('message_text',text);if(file){fd.append('file',file);if(file.type.startsWith('video/'))fd.append('media_kind','video');else if(file.type.startsWith('image/'))fd.append('media_kind','image');else if(file.type.startsWith('audio/'))fd.append('media_kind','audio');}
-    try{var r=await api('/api/groups/'+gid+'/messages',{method:'POST',body:fd});var d=await r.json();if(!r.ok)throw new Error(d.error||'Ошибка');inp.value='';inp.style.height='36px';fi.value='';lgroupMessages(gid);}catch(e){alert(e.message);}
+    var fd=new FormData();if(text)fd.append('message_text',text);
+    if(file){fd.append('file',file,file.name);var duration=await getMediaDuration(file);if(duration)fd.append('duration_seconds',String(duration));fd.append('media_kind',file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':file.type.startsWith('image/')?'image':'file');}
+    if(replyToMsg){fd.append('reply_to',replyToMsg.id);fd.append('reply_text',replyToMsg.text||'');fd.append('reply_sender',replyToMsg.sender||'Пользователь');cancelReply();}
+    try{var r=await api('/api/groups/'+gid+'/messages',{method:'POST',body:fd});var d=await r.json();if(!r.ok)throw new Error(d.error||'Ошибка');if(inp){inp.value='';inp.style.height='36px';}if(fi)fi.value='';lgroupMessages(gid);}catch(e){alert(e.message);}
 }
 function showGroupMembers(gid){
     Promise.all([
@@ -2323,7 +2341,7 @@ function forwardTo(fid,fname){
     closeForward();
     var ids=Object.keys(selectedMessages);
     if(!confirm('Переслать '+ids.length+' сообщений пользователю '+fname+'?'))return;
-    var msgData = cachedMessages[ct.id] || [];
+    var msgData = cachedMessages[messageCacheKey()] || [];
     var i=0;
     function nx(){
         if(i>=ids.length){clearSelection();alert('Переслано!');return}
@@ -2350,7 +2368,7 @@ function closeAllMsgActions() {
 function showMsgActions(el, msgId) {
     closeAllMsgActions();
     
-    var msgData = cachedMessages[ct.id] || [];
+    var msgData = cachedMessages[messageCacheKey()] || [];
     var msg = null;
     for (var i = 0; i < msgData.length; i++) {
         if (msgData[i].id == msgId) {
@@ -2512,17 +2530,11 @@ function closeReactionPicker() {
 }
 
 function addReaction(msgId, reaction) {
-    api('/api/messages/' + msgId + '/react', { method: 'POST', body: { reaction: reaction } })
+    var url=ct&&ct.group?'/api/groups/'+ct.id+'/messages/'+msgId+'/react':'/api/messages/'+msgId+'/react';
+    api(url, { method: 'POST', body: { reaction: reaction } })
         .then(function(r) { return r.json() })
-        .then(function(d) {
-            closeReactionPicker();
-            lm(ct.id, true);
-        })
-        .catch(function(err) {
-            console.error('Ошибка реакции:', err);
-            closeReactionPicker();
-            lm(ct.id, true);
-        });
+        .then(function(d) { closeReactionPicker(); if(ct&&ct.group)lgroupMessages(ct.id,true);else lm(ct.id,true); })
+        .catch(function(err) { console.error('Ошибка реакции:', err); closeReactionPicker(); if(ct&&ct.group)lgroupMessages(ct.id,true);else lm(ct.id,true); });
 }
 
 // ========== ЗАКРЕПЛЕНИЯ ==========
@@ -2603,7 +2615,7 @@ function navigateToMessage(msgId){
         setTimeout(function(){msgEl.classList.remove('highlight')},2000);
         return;
     }
-    lm(ct.id,false,function(){
+    var reload=function(){
         var el=document.querySelector('.msg[data-msg-id="'+msgId+'"]');
         if(el){
             el.scrollIntoView({behavior:'smooth',block:'center'});
@@ -2612,12 +2624,13 @@ function navigateToMessage(msgId){
             el.classList.add('highlight');
             setTimeout(function(){el.classList.remove('highlight')},2000);
         }
-    });
+    };
+    if(ct&&ct.group)lgroupMessages(ct.id,false,reload);else lm(ct.id,false,reload);
 }
 
 // ===== ФУНКЦИЯ ОТВЕТА НА СООБЩЕНИЕ =====
 function startReplyToMessage(msgId, messageText, filePath, fileName) {
-    var msgData = cachedMessages[ct.id] || [];
+    var msgData = cachedMessages[messageCacheKey()] || [];
     var originalMsg = null;
     for (var i = 0; i < msgData.length; i++) {
         if (msgData[i].id == msgId) {
@@ -2658,7 +2671,7 @@ function cancelReply() {
 
 // ===== РЕДАКТИРОВАНИЕ СООБЩЕНИЯ =====
 function editMessage(msgId) {
-    var msgData = cachedMessages[ct.id] || [];
+    var msgData = cachedMessages[messageCacheKey()] || [];
     var msg = null;
     for (var i = 0; i < msgData.length; i++) {
         if (msgData[i].id == msgId) {
@@ -2697,19 +2710,11 @@ function editMessage(msgId) {
             return;
         }
         
-        api('/api/messages/' + msgId, {
-            method: 'PUT',
-            body: { message_text: newText }
-        }).then(function(r) { return r.json() }).then(function(d) {
-            if (d.ok) {
-                modal.remove();
-                lm(ct.id, true);
-            } else {
-                alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
-            }
-        }).catch(function(err) {
-            alert('Ошибка редактирования');
-        });
+        var editUrl=ct&&ct.group?'/api/groups/'+ct.id+'/messages/'+msgId:'/api/messages/'+msgId;
+        api(editUrl, {method: 'PUT', body: { message_text: newText }}).then(function(r) { return r.json() }).then(function(d) {
+            if (d.ok) { modal.remove(); if(ct&&ct.group)lgroupMessages(ct.id,true);else lm(ct.id, true); }
+            else alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
+        }).catch(function(){ alert('Ошибка редактирования'); });
     };
     
     modal.addEventListener('keydown', function(e) {
@@ -2958,7 +2963,7 @@ function openVideoFullscreen(url, type) {
 function lm(id,silent,callback){
     api('/api/messages/'+id).then(function(r){return r.json()}).then(function(d){
         var c=document.getElementById('cm');if(!c)return;
-        cachedMessages[id] = d.messages || [];
+        cachedMessages[messageCacheKey()] = d.messages || [];
         var bottom=c.scrollHeight-c.scrollTop-c.clientHeight<80,h='';
         (d.messages||[]).forEach(function(m){
             var con='',isSent=m.sender_id===U.id;
@@ -3231,10 +3236,11 @@ async function sendPastedFiles(chatId){
             cancelReply();
         }
         
-        try{await api('/api/messages/'+chatId,{method:'POST',body:fd})}catch(e){}
+        var endpoint=(ct&&ct.group)?'/api/groups/'+chatId+'/messages':'/api/messages/'+chatId;
+        try{await api(endpoint,{method:'POST',body:fd})}catch(e){}
     }
     clearPastedFiles();var inp=document.getElementById('mi');if(inp)inp.value='';
-    if(sb){sb.disabled=false;sb.textContent='Отпр.'}selfDestructMode=false;photoSendMode=null;hidePhotoSendOptions();lm(chatId);
+    if(sb){sb.disabled=false;sb.textContent='Отпр.'}selfDestructMode=false;photoSendMode=null;hidePhotoSendOptions();if(ct&&ct.group)lgroupMessages(chatId);else lm(chatId);
 }
 
 // ===== АУДИО ПЛЕЕР =====
@@ -3512,7 +3518,8 @@ async function sendFile(id,file){
     else if (file.type.startsWith('audio/')) fd.append('media_kind','audio');
     else if (file.type.startsWith('image/')) fd.append('media_kind','image');
     else fd.append('media_kind','file');
-    api('/api/messages/'+id,{method:'POST',body:fd}).then(function(){ lm(id); }).catch(function(err){ console.error('Ошибка отправки файла:', err); alert('Ошибка отправки файла.'); });
+    var url=(ct&&ct.group)?'/api/groups/'+id+'/messages':'/api/messages/'+id;
+    api(url,{method:'POST',body:fd}).then(function(){ if(ct&&ct.group)lgroupMessages(id); else lm(id); }).catch(function(err){ console.error('Ошибка отправки файла:', err); alert('Ошибка отправки файла.'); });
 }
 
 function logout(){
@@ -3647,8 +3654,9 @@ function openMyStickerPack(packId,packName){
     });
 }
 function sendMySticker(url,name){
-    if(!ct||ct.group)return;
-    api('/api/messages/'+ct.id+'/sticker',{method:'POST',body:{url:url,name:name}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка');return d;})}).then(function(){closeStickerModal();lm(ct.id);}).catch(function(e){alert(e.message);});
+    if(!ct)return;
+    var endpoint=ct.group?'/api/groups/'+ct.id+'/sticker':'/api/messages/'+ct.id+'/sticker';
+    api(endpoint,{method:'POST',body:{url:url,name:name}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка');return d;})}).then(function(){closeStickerModal();if(ct.group)lgroupMessages(ct.id);else lm(ct.id);}).catch(function(e){alert(e.message);});
 }
 
 function sendSticker(stickerUrl,stickerName){
@@ -3658,9 +3666,10 @@ function sendSticker(stickerUrl,stickerName){
         var ext=stickerName.split('.').pop()||'png';
         var mime='image/'+(ext==='webp'?'webp':ext==='gif'?'gif':'png');
         var file=new File([blob],'sticker.'+ext,{type:mime});
-        var fd=new FormData(); fd.append('file',file,'sticker.'+ext);
-        return api('/api/messages/'+ct.id,{method:'POST',body:fd});
-    }).then(function(){lm(ct.id)}).catch(function(err){console.error(err)});
+        var fd=new FormData(); fd.append('file',file,'sticker.'+ext); fd.append('media_kind','image');
+        var endpoint=ct.group?'/api/groups/'+ct.id+'/messages':'/api/messages/'+ct.id;
+        return api(endpoint,{method:'POST',body:fd});
+    }).then(function(){if(ct.group)lgroupMessages(ct.id);else lm(ct.id)}).catch(function(err){console.error(err)});
 }
 
 document.getElementById('stickerModal').addEventListener('click',function(e){if(e.target===this)closeStickerModal()});
