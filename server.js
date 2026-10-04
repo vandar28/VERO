@@ -728,7 +728,9 @@ app.post('/api/messages/:fid', auth, upload.single('file'), async function(req, 
     const friend = await dbGet("SELECT * FROM friends WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?)) AND status='accepted'", [req.userId, fid, fid, req.userId]);
     if (!friend) return res.status(403).json({ error: 'Не друзья' });
     
-    let text = req.body.message_text || '';
+    let text = typeof req.body.message_text === 'string' ? req.body.message_text : '';
+    text = text.trim();
+    if (text.length > 100000) return res.status(413).json({ error: 'Сообщение слишком длинное (максимум 100000 символов)' });
     let filePath = null;
     let fileName = null;
     let fileType = null;
@@ -1075,7 +1077,10 @@ app.post('/api/groups/:id/messages', auth, upload.single('file'), async function
   try {
     const gid = Number(req.params.id);
     if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
-    const text = String(req.body.message_text || '').trim() || null;
+    let text = typeof req.body.message_text === 'string' ? req.body.message_text : '';
+    text = text.trim();
+    if (text.length > 100000) return res.status(413).json({ error: 'Сообщение слишком длинное (максимум 100000 символов)' });
+    text = text || null;
     let fileName=null,fileType=null,filePath=null,fileSize=0,duration=req.body.duration_seconds ? Number(req.body.duration_seconds) : null,kind=req.body.media_kind||null;
     if (req.file) {
       fileName=req.file.originalname; fileType=req.file.mimetype; filePath=req.file.path; fileSize=req.file.size||0;
@@ -1188,7 +1193,7 @@ app.get('/dashboard.html', async function(req, res) { res.sendFile(path.join(__d
 const httpServer = http.createServer(app);
 const io = new SocketIOServer(httpServer, {
   cors: { origin: true, credentials: true },
-  maxHttpBufferSize: 1e6
+  maxHttpBufferSize: 5e6
 });
 
 io.use(function(socket, next) {
@@ -1207,7 +1212,8 @@ io.on('connection', function(socket) {
   socket.join('user:' + socket.userId);
   socket.on('call-user', function(data) {
     const to = Number(data && data.to);
-    if (to) io.to('user:' + to).emit('incoming-call', {
+    if (!to || !data || !data.offer) return;
+    io.to('user:' + to).emit('incoming-call', {
       from: socket.userId,
       offer: data.offer,
       video: !!data.video,
@@ -1216,11 +1222,13 @@ io.on('connection', function(socket) {
   });
   socket.on('call-answer', function(data) {
     const to = Number(data && data.to);
-    if (to) io.to('user:' + to).emit('call-answered', { from: socket.userId, answer: data.answer });
+    if (!to || !data || !data.answer) return;
+    io.to('user:' + to).emit('call-answered', { from: socket.userId, answer: data.answer });
   });
   socket.on('ice-candidate', function(data) {
     const to = Number(data && data.to);
-    if (to) io.to('user:' + to).emit('ice-candidate', { from: socket.userId, candidate: data.candidate });
+    if (!to || !data || !data.candidate) return;
+    io.to('user:' + to).emit('ice-candidate', { from: socket.userId, candidate: data.candidate });
   });
   socket.on('call-reject', function(data) {
     const to = Number(data && data.to);
