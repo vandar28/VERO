@@ -353,15 +353,16 @@ body.chat-open #tc {
 .chat-messages::-webkit-scrollbar{width:4px}
 .chat-messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
 
+.chat-messages{--chat-msg-font-size:13px;--chat-msg-max-width:65%;}
 .msg{
-  max-width:65%;
+  max-width:var(--chat-msg-max-width);
   padding:5px 8px;
   border-radius:8px;
-  font-size:10px;
+  font-size:var(--chat-msg-font-size);
   word-wrap:break-word;
   line-height:1.3;
   cursor:pointer;
-  transition:all 0.15s;
+  transition:background-color 0.15s, box-shadow 0.15s, outline-color 0.15s;
   position:relative;
   scroll-margin-top:20px;
 }
@@ -2664,11 +2665,14 @@ function editMessage(msgId) {
 
 // ===== ИЗМЕНЕНИЕ РАЗМЕРА ЧАТА (ТОЛЬКО ДЛЯ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ) =====
 function updateChatSize() {
-    var messages = document.querySelectorAll('.msg');
-    var sizePercent = chatMaxWidth + '%';
-    messages.forEach(function(msg) {
-        msg.style.maxWidth = sizePercent;
-        msg.style.fontSize = chatFontSize + 'px';
+    /* Не меняем inline-стили каждого сообщения: это вызывало повторный reflow и
+       заметное мигание/дёргание уже отрисованных сообщений. Меняем только две
+       CSS-переменные на контейнере сообщений, поэтому браузер применяет размер
+       согласованно ко всему списку. */
+    var containers = document.querySelectorAll('.chat-messages');
+    containers.forEach(function(container) {
+        container.style.setProperty('--chat-msg-max-width', chatMaxWidth + '%');
+        container.style.setProperty('--chat-msg-font-size', chatFontSize + 'px');
     });
     localStorage.setItem('chatFontSize', chatFontSize);
     localStorage.setItem('chatMaxWidth', chatMaxWidth);
@@ -3009,7 +3013,7 @@ function lm(id,silent,callback){
         if(callback)callback();
         
         if (typeof updateChatSize === 'function') {
-            setTimeout(updateChatSize, 100);
+            updateChatSize();
         }
         
         api('/api/user/status/' + id).then(function(r){return r.json()}).then(function(status){
