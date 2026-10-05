@@ -295,12 +295,7 @@ async function startDB() {
     "CREATE INDEX IF NOT EXISTS idx_messages_receiver_read ON messages(receiver_id, is_read)",
     "CREATE INDEX IF NOT EXISTS idx_friends_users ON friends(from_user, to_user, status)",
     "CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id)",
-    "ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS reply_to BIGINT DEFAULT NULL",
-    "ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS reply_text TEXT DEFAULT NULL",
-    "ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS reply_sender TEXT DEFAULT NULL",
-    "CREATE TABLE IF NOT EXISTS group_reactions (id SERIAL PRIMARY KEY, group_message_id BIGINT REFERENCES group_messages(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, reaction TEXT NOT NULL, UNIQUE(group_message_id, user_id, reaction))",
     "CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id, created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_group_reactions_message ON group_reactions(group_message_id)",
     "CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id, group_id)",
     "CREATE INDEX IF NOT EXISTS idx_sticker_packs_user ON sticker_packs(user_id)"
   ];
@@ -545,6 +540,27 @@ app.get('/api/admin/stats', auth, adminAuth, async function(req, res) {
   });
 });
 
+app.get('/api/admin/groups', auth, adminAuth, async function(req, res) {
+  const groups = await dbAll(`
+    SELECT g.id, g.name, g.owner_id, g.created_at, u.username AS owner_username,
+           (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id=g.id) AS member_count
+    FROM groups g
+    LEFT JOIN users u ON u.id=g.owner_id
+    ORDER BY g.created_at DESC
+  `);
+  res.json({ groups: groups });
+});
+
+app.delete('/api/admin/group/:groupId', auth, adminAuth, async function(req, res) {
+  const groupId = Number(req.params.groupId);
+  if (!Number.isInteger(groupId) || groupId <= 0) return res.status(400).json({ error: 'Некорректная группа' });
+  const group = await dbGet('SELECT * FROM groups WHERE id=?', [groupId]);
+  if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+  await dbRun('DELETE FROM groups WHERE id=?', [groupId]);
+  backupNow('админ удаление группы');
+  res.json({ ok: true, message: 'Группа удалена' });
+});
+
 app.delete('/api/admin/user/:userId', auth, adminAuth, async function(req, res) {
   const userId = parseInt(req.params.userId);
   if (userId === req.userId) {
@@ -664,6 +680,55 @@ app.post('/api/upload', auth, upload.single('file'), async function(req, res) {
   }
 });
 
+// ===== СКАЧИВАНИЕ ФАЙЛОВ С ОРИГИНАЛЬНЫМ ИМЕНЕМ =====
+function safeDownloadName(name) {
+  name = String(name || 'file').replace(/[\\\r\n]/g, '_').trim();
+  return name || 'file';
+}
+async function proxyCloudinaryFile(res, url, filename, contentType) {
+  if (!url || !/^https?:\/\//i.test(String(url))) return res.status(404).json({error:'Файл недоступен'});
+  try {
+    const upstream = await fetch(String(url), { redirect: 'follow' });
+    if (!upstream.ok || !upstream.body) return res.status(404).json({error:'Не удалось получить файл'});
+    const name = safeDownloadName(filename);
+    res.status(200);
+    res.setHeader('Content-Type', contentType || upstream.headers.get('content-type') || 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="download"; filename*=UTF-8\'\'' + encodeURIComponent(name));
+    const len = upstream.headers.get('content-length');
+    if (len) res.setHeader('Content-Length', len);
+    const { Readable } = require('stream');
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (e) {
+    console.error('Ошибка скачивания:', e);
+    if (!res.headersSent) res.status(500).json({error:'Ошибка скачивания файла'});
+    else res.end();
+  }
+}
+
+app.get('/api/files/:id/download', auth, async function(req, res) {
+  try {
+    const f = await dbGet('SELECT * FROM files WHERE id=? AND user_id=?', [req.params.id, req.userId]);
+    if (!f) return res.status(404).json({error:'Файл не найден'});
+    return proxyCloudinaryFile(res, f.filename, f.original_name, f.file_type);
+  } catch (e) { res.status(500).json({error:'Ошибка скачивания'}); }
+});
+
+app.get('/api/messages/:id/download', auth, async function(req, res) {
+  try {
+    const m = await dbGet('SELECT * FROM messages WHERE id=? AND (sender_id=? OR receiver_id=?)', [req.params.id, req.userId, req.userId]);
+    if (!m || !m.file_path) return res.status(404).json({error:'Файл не найден'});
+    return proxyCloudinaryFile(res, m.file_path, m.file_name, m.file_type);
+  } catch (e) { res.status(500).json({error:'Ошибка скачивания'}); }
+});
+
+app.get('/api/group-messages/:id/download', auth, async function(req, res) {
+  try {
+    const m = await dbGet('SELECT gm.* FROM group_messages gm JOIN group_members gmem ON gmem.group_id=gm.group_id AND gmem.user_id=? WHERE gm.id=?', [req.userId, req.params.id]);
+    if (!m || !m.file_path) return res.status(404).json({error:'Файл не найден'});
+    return proxyCloudinaryFile(res, m.file_path, m.file_name, m.file_type);
+  } catch (e) { res.status(500).json({error:'Ошибка скачивания'}); }
+});
+
 app.get('/api/files', auth, async function(req, res) {
   const user = await dbGet('SELECT * FROM users WHERE id=?', [req.userId]);
   if (user && user.email === process.env.ADMIN_EMAIL) {
@@ -733,9 +798,7 @@ app.post('/api/messages/:fid', auth, upload.single('file'), async function(req, 
     const friend = await dbGet("SELECT * FROM friends WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?)) AND status='accepted'", [req.userId, fid, fid, req.userId]);
     if (!friend) return res.status(403).json({ error: 'Не друзья' });
     
-    let text = typeof req.body.message_text === 'string' ? req.body.message_text : '';
-    text = text.trim();
-    if (text.length > 100000) return res.status(413).json({ error: 'Сообщение слишком длинное (максимум 100000 символов)' });
+    let text = req.body.message_text || '';
     let filePath = null;
     let fileName = null;
     let fileType = null;
@@ -1075,18 +1138,6 @@ app.get('/api/groups/:id/messages', auth, async function(req, res) {
   const gid = Number(req.params.id);
   if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
   const messages = await dbAll(`SELECT gm.*,u.username,u.avatar FROM group_messages gm JOIN users u ON u.id=gm.sender_id WHERE gm.group_id=? ORDER BY gm.created_at ASC`, [gid]);
-  const ids = messages.map(function(m){ return m.id; });
-  if (ids.length) {
-    const placeholders = ids.map(function(){ return '?'; }).join(',');
-    const reactions = await dbAll('SELECT group_message_id,reaction,user_id FROM group_reactions WHERE group_message_id IN ('+placeholders+')', ids);
-    const map = {};
-    reactions.forEach(function(r){
-      if(!map[r.group_message_id]) map[r.group_message_id]={};
-      if(!map[r.group_message_id][r.reaction]) map[r.group_message_id][r.reaction]=[];
-      map[r.group_message_id][r.reaction].push(r.user_id);
-    });
-    messages.forEach(function(m){ m.reactions=map[m.id]||{}; });
-  }
   res.json({ messages: messages });
 });
 
@@ -1094,79 +1145,19 @@ app.post('/api/groups/:id/messages', auth, upload.single('file'), async function
   try {
     const gid = Number(req.params.id);
     if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
-    let text = typeof req.body.message_text === 'string' ? req.body.message_text : '';
-    text = text.trim();
-    if (text.length > 100000) return res.status(413).json({ error: 'Сообщение слишком длинное (максимум 100000 символов)' });
-    text = text || null;
-    const replyTo = req.body.reply_to ? Number(req.body.reply_to) : null;
-    const replyText = typeof req.body.reply_text === 'string' ? req.body.reply_text : null;
-    const replySender = typeof req.body.reply_sender === 'string' ? req.body.reply_sender : null;
+    const text = String(req.body.message_text || '').trim() || null;
     let fileName=null,fileType=null,filePath=null,fileSize=0,duration=req.body.duration_seconds ? Number(req.body.duration_seconds) : null,kind=req.body.media_kind||null;
     if (req.file) {
       fileName=req.file.originalname; fileType=req.file.mimetype; filePath=req.file.path; fileSize=req.file.size||0;
       kind=fileType.startsWith('video/')?'video':fileType.startsWith('audio/')?'audio':fileType.startsWith('image/')?'image':'file';
     }
     if (!text && !req.file) return res.status(400).json({error:'Пустое сообщение'});
-    const msg=await dbGet(`INSERT INTO group_messages (group_id,sender_id,message_text,file_name,file_type,file_path,file_size,duration_seconds,media_kind,reply_to,reply_text,reply_sender) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, [gid,req.userId,text,fileName,fileType,filePath,fileSize,duration,kind,replyTo,replyText,replySender]);
+    const msg=await dbGet(`INSERT INTO group_messages (group_id,sender_id,message_text,file_name,file_type,file_path,file_size,duration_seconds,media_kind) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id`, [gid,req.userId,text,fileName,fileType,filePath,fileSize,duration,kind]);
     res.json({ok:true,id:msg.id});
   } catch(e) {
     console.error('Ошибка сообщения группы:',e);
     res.status(500).json({error:e.message||'Ошибка отправки'});
   }
-});
-
-app.put('/api/groups/:id/messages/:mid', auth, async function(req,res){
-  try {
-    const gid=Number(req.params.id), mid=Number(req.params.mid);
-    if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа к группе'});
-    const text=typeof req.body.message_text==='string'?req.body.message_text.trim():'';
-    if(!text) return res.status(400).json({error:'Текст сообщения не может быть пустым'});
-    const msg=await dbGet('SELECT * FROM group_messages WHERE id=? AND group_id=?',[mid,gid]);
-    if(!msg) return res.status(404).json({error:'Сообщение не найдено'});
-    if(msg.sender_id!==req.userId) return res.status(403).json({error:'Вы не можете изменять чужие сообщения'});
-    await dbRun('UPDATE group_messages SET message_text=? WHERE id=?',[text,mid]);
-    res.json({ok:true});
-  } catch(e){ res.status(500).json({error:'Ошибка изменения сообщения'}); }
-});
-
-app.post('/api/groups/:id/messages/:mid/react', auth, async function(req,res){
-  try {
-    const gid=Number(req.params.id), mid=Number(req.params.mid);
-    if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа к группе'});
-    const reaction=String(req.body.reaction||'').trim();
-    if(!reaction) return res.status(400).json({error:'Реакция не указана'});
-    const msg=await dbGet('SELECT id FROM group_messages WHERE id=? AND group_id=?',[mid,gid]);
-    if(!msg) return res.status(404).json({error:'Сообщение не найдено'});
-    const existing=await dbGet('SELECT id FROM group_reactions WHERE group_message_id=? AND user_id=? AND reaction=?',[mid,req.userId,reaction]);
-    if(existing){ await dbRun('DELETE FROM group_reactions WHERE id=?',[existing.id]); return res.json({ok:true,action:'removed'}); }
-    const count=await dbGet('SELECT COUNT(*)::int AS count FROM group_reactions WHERE group_message_id=? AND user_id=?',[mid,req.userId]);
-    if(Number(count.count)>=2) return res.status(400).json({error:'Можно поставить максимум 2 реакции'});
-    await dbRun('INSERT INTO group_reactions (group_message_id,user_id,reaction) VALUES (?,?,?)',[mid,req.userId,reaction]);
-    res.json({ok:true,action:'added'});
-  } catch(e){ res.status(500).json({error:'Ошибка реакции'}); }
-});
-
-app.post('/api/groups/:id/messages/:mid/media-duration', auth, async function(req,res){
-  try {
-    const gid=Number(req.params.id), mid=Number(req.params.mid), duration=Number(req.body.duration_seconds);
-    if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа к группе'});
-    if(!Number.isFinite(duration)||duration<0||duration>86400) return res.status(400).json({error:'Некорректная длительность'});
-    const msg=await dbGet('SELECT id FROM group_messages WHERE id=? AND group_id=?',[mid,gid]);
-    if(!msg) return res.status(404).json({error:'Сообщение не найдено'});
-    await dbRun('UPDATE group_messages SET duration_seconds=? WHERE id=?',[duration,mid]);
-    res.json({ok:true,duration_seconds:duration});
-  } catch(e){ res.status(500).json({error:'Ошибка сохранения длительности'}); }
-});
-
-app.post('/api/groups/:id/sticker', auth, async function(req,res){
-  try {
-    const gid=Number(req.params.id);
-    if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа к группе'});
-    const url=String(req.body.url||'').trim(), name=String(req.body.name||'sticker');
-    if(!url) return res.status(400).json({error:'Стикер не указан'});
-    const msg=await dbGet(`INSERT INTO group_messages (group_id,sender_id,file_name,file_type,file_path,file_size,media_kind) VALUES (?,?,?,?,?,?,?) RETURNING id`,[gid,req.userId,name,'image/webp',url,0,'sticker']);
-    res.json({ok:true,id:msg.id});
-  } catch(e){ res.status(500).json({error:'Ошибка отправки стикера'}); }
 });
 
 // ===== ПОЛЬЗОВАТЕЛЬСКИЕ ПАКИ СТИКЕРОВ =====
@@ -1180,9 +1171,13 @@ app.post('/api/sticker-packs', auth, upload.array('stickers', 50), async functio
     const name=String(req.body.name||'').trim();
     if(name.length<2||name.length>60) return res.status(400).json({error:'Название пака: от 2 до 60 символов'});
     if(!req.files||!req.files.length) return res.status(400).json({error:'Добавьте хотя бы один стикер'});
-    const first=req.files[0];
-    const pack=await dbGet('INSERT INTO sticker_packs (user_id,name,cover_url) VALUES (?,?,?) RETURNING *',[req.userId,name,first.path]);
-    for(const f of req.files) await dbRun('INSERT INTO user_stickers (pack_id,file_url,file_name) VALUES (?,?,?)',[pack.id,f.path,f.originalname]);
+
+    // Обложкой всегда становится ПОСЛЕДНИЙ стикер из созданного пака.
+    const last=req.files[req.files.length-1];
+    const pack=await dbGet('INSERT INTO sticker_packs (user_id,name,cover_url) VALUES (?,?,?) RETURNING *',[req.userId,name,last.path]);
+    for(const f of req.files) {
+      await dbRun('INSERT INTO user_stickers (pack_id,file_url,file_name) VALUES (?,?,?)',[pack.id,f.path,f.originalname]);
+    }
     res.json({ok:true,pack:pack});
   }catch(e){console.error('Ошибка пака:',e);res.status(500).json({error:e.message||'Не удалось создать пак'});}
 });
@@ -1267,7 +1262,7 @@ app.get('/dashboard.html', async function(req, res) { res.sendFile(path.join(__d
 const httpServer = http.createServer(app);
 const io = new SocketIOServer(httpServer, {
   cors: { origin: true, credentials: true },
-  maxHttpBufferSize: 5e6
+  maxHttpBufferSize: 1e6
 });
 
 io.use(function(socket, next) {
@@ -1286,8 +1281,7 @@ io.on('connection', function(socket) {
   socket.join('user:' + socket.userId);
   socket.on('call-user', function(data) {
     const to = Number(data && data.to);
-    if (!to || !data || !data.offer) return;
-    io.to('user:' + to).emit('incoming-call', {
+    if (to) io.to('user:' + to).emit('incoming-call', {
       from: socket.userId,
       offer: data.offer,
       video: !!data.video,
@@ -1296,13 +1290,11 @@ io.on('connection', function(socket) {
   });
   socket.on('call-answer', function(data) {
     const to = Number(data && data.to);
-    if (!to || !data || !data.answer) return;
-    io.to('user:' + to).emit('call-answered', { from: socket.userId, answer: data.answer });
+    if (to) io.to('user:' + to).emit('call-answered', { from: socket.userId, answer: data.answer });
   });
   socket.on('ice-candidate', function(data) {
     const to = Number(data && data.to);
-    if (!to || !data || !data.candidate) return;
-    io.to('user:' + to).emit('ice-candidate', { from: socket.userId, candidate: data.candidate });
+    if (to) io.to('user:' + to).emit('ice-candidate', { from: socket.userId, candidate: data.candidate });
   });
   socket.on('call-reject', function(data) {
     const to = Number(data && data.to);
