@@ -778,11 +778,16 @@ async function proxyCloudinaryFile(res, url, filename, contentType) {
     const len = upstream.headers.get('content-length');
     if (len) res.setHeader('Content-Length', len);
     const { Readable } = require('stream');
-    Readable.fromWeb(upstream.body).on('error', err => {
+    const stream = (typeof Readable.fromWeb === 'function')
+      ? Readable.fromWeb(upstream.body)
+      : Readable.from((async function* () { for await (const chunk of upstream.body) yield chunk; })());
+    stream.on('error', err => {
       console.error('Поток скачивания прерван:', err.message);
       if (!res.headersSent) res.status(502);
       res.end();
-    }).pipe(res);
+    });
+    res.on('close', () => { if (!res.writableEnded && upstream.body && typeof upstream.body.cancel === 'function') upstream.body.cancel().catch(() => {}); });
+    stream.pipe(res);
   } catch (e) {
     console.error('Ошибка скачивания:', e);
     if (!res.headersSent) res.status(500).json({ error: 'Ошибка скачивания файла' });
