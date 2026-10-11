@@ -216,6 +216,10 @@ body.chat-open #tc {
   flex-shrink: 0;
 }
 
+.chat-header-tools{display:none;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg-card)}
+.chat-header-tools.open{display:flex}
+.call-list-btn{min-width:30px;padding:6px 8px!important;border-radius:8px!important;font-size:13px!important;color:var(--accent-light)!important}
+.chat-menu-toggle{width:34px;height:34px;flex:0 0 34px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer}
 .chat-fullscreen .chat-header h2 {
   flex: 1;
   font-size: 14px;
@@ -353,15 +357,20 @@ body.chat-open #tc {
 .chat-messages::-webkit-scrollbar{width:4px}
 .chat-messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
 
+.chat-messages{--chat-msg-font-size:13px;--chat-msg-max-width:65%;}
 .msg{
-  max-width:65%;
+  max-width:var(--chat-msg-max-width);
+  min-width:0;
+  flex-shrink:0;
   padding:5px 8px;
   border-radius:8px;
-  font-size:10px;
+  font-size:var(--chat-msg-font-size);
   word-wrap:break-word;
   line-height:1.3;
   cursor:pointer;
-  transition:all 0.15s;
+  user-select:text; -webkit-user-select:text;
+  transition:background-color 0.15s, box-shadow 0.15s, outline-color 0.15s;
+  overflow-wrap:anywhere;
   position:relative;
   scroll-margin-top:20px;
 }
@@ -1710,6 +1719,8 @@ function la(){
             });
             h+=(users.length?'':'<div class="empty">Нет пользователей</div>')+'</div></div>';
             h+='<div class="panel" id="adminGroupsPanel"><h2>👥 Группы</h2><div class="empty">Загрузка групп...</div></div>';
+            h+='<div class="panel" id="adminStoragePanel"><h2>💾 Хранилище мессенджера</h2><div id="adminStorageStats">Загрузка...</div><label style="font-size:11px">Удалять файлы старше (дней): <input id="cleanupDays" type="number" min="30" max="3650" value="180" style="width:75px"></label> <button class="btn btn-red" onclick="cleanupOldFiles()">🧹 Очистить старые файлы</button></div>';
+            loadAdminStorage();
             document.getElementById('tc').innerHTML=h;
             loadAdminGroups();
         });
@@ -1821,7 +1832,7 @@ function lu(){
                 if(ids.indexOf(u.id)>=0){
                     h+='<span style="color:var(--green);font-size:11px">✅ Друг</span>';
                 } else {
-                    h+='<button class="btn" onclick="event.stopPropagation();sr('+u.id+')">➕ Добавить</button>';
+                    h+='<button class="btn" id="friendState'+u.id+'" onclick="event.stopPropagation();sr('+u.id+')">➕ Добавить</button>';setTimeout(function(uid){api('/api/friends/status/'+uid).then(function(r){return r.json()}).then(function(st){var b=document.getElementById('friendState'+uid);if(!b)return;if(st.status==='sent'){b.textContent='⏳ Заявка отправлена';b.disabled=true;}else if(st.status==='received'){b.textContent='📩 Заявка вам';b.disabled=true;}else if(st.status==='accepted'){b.textContent='✅ Друг';b.disabled=true;}else if(st.status==='rejected'){b.textContent='❌ Заявка отклонена';b.disabled=true;}}).catch(function(){});},0,u.id);
                 }
                 
                 if(isAdmin) {
@@ -1835,7 +1846,7 @@ function lu(){
     });
 }
 
-function sr(id){api('/api/friends/request/'+id,{method:'POST'}).then(function(){lu()})}
+function sr(id){api('/api/friends/request/'+id,{method:'POST'}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Не удалось отправить заявку');return d;});}).then(function(){alert('Заявка отправлена или автоматически принята');lu();}).catch(function(e){alert(e.message||'Ошибка заявки');});}
 
 function lfr(){
     api('/api/friends/requests').then(function(r){return r.json()}).then(function(d1){
@@ -1900,6 +1911,8 @@ function openGroup(gid){
         var fs=document.createElement('div');fs.className='chat-fullscreen';fs.id='chatFullscreen';
         fs.innerHTML='<div class="chat-panel"><div class="chat-header"><div class="avatar-sm">👥</div><div><h2>'+escapeHtml(d.group.name)+'</h2><div style="font-size:9px;color:var(--text-muted)">'+d.members.length+' участников</div></div><button class="btn btn-gray" onclick="showGroupMembers('+gid+')">👥</button>'+(Number(d.group.owner_id)===Number(U.id)?'<button class="btn btn-red" onclick="deleteOwnGroup('+gid+')">🗑️</button>':'')+'<button class="btn btn-gray" onclick="closeChatFullscreen()">← Назад</button></div><div class="chat-container"><div class="chat-messages" id="cm"><div class="empty">Загрузка...</div></div><div class="chat-input-area"><input type="text" id="mi" placeholder="Сообщение..."><input type="file" id="cf" style="display:none"><button class="icon-btn" id="ab">📎</button><button class="btn" id="sb">Отпр.</button></div></div></div>';
         document.body.appendChild(fs);
+    updateChatSize();
+    var chatMsgArea=fs.querySelector('.chat-messages');if(chatMsgArea){chatMsgArea.addEventListener('dblclick',function(ev){var sel=window.getSelection&&window.getSelection();if(sel&&String(sel).trim()){var text=String(sel).trim();if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(function(){showToast('Текст скопирован');}).catch(function(){});}});}
         document.getElementById('ab').onclick=function(){document.getElementById('cf').click();};
         document.getElementById('sb').onclick=function(){sendGroupMessage(gid);};
         document.getElementById('mi').onkeypress=function(e){if(e.key==='Enter')sendGroupMessage(gid);};
@@ -1927,27 +1940,8 @@ function lgroupMessages(gid,silent){
 async function sendGroupMessage(gid){
     var inp=document.getElementById('mi'),fi=document.getElementById('cf'),text=(inp.value||'').trim(),file=fi.files[0];
     if(!text&&!file)return;
-    try{
-        if(file&&file.size>=15*1024*1024){
-            var duration=await getMediaDuration(file),meta={message_text:text,file_name:file.name,file_type:file.type||'application/octet-stream'};
-            if(duration)meta.duration_seconds=String(duration);
-            await uploadLargeGroup(gid,file,meta);
-        }else{
-            var fd=new FormData();if(text)fd.append('message_text',text);if(file){fd.append('file',file);if(file.type.startsWith('video/'))fd.append('media_kind','video');else if(file.type.startsWith('image/'))fd.append('media_kind','image');else if(file.type.startsWith('audio/'))fd.append('media_kind','audio');}
-            var r=await api('/api/groups/'+gid+'/messages',{method:'POST',body:fd});var d=await r.json();if(!r.ok)throw new Error(d.error||'Ошибка');
-        }
-        inp.value='';fi.value='';lgroupMessages(gid);
-    }catch(e){alert(e.message||'Ошибка отправки');}
-}
-async function uploadLargeGroup(gid,file,meta){
-    var chunkSize=5*1024*1024,total=Math.ceil(file.size/chunkSize),uploadId=makeUploadId();
-    for(var i=0;i<total;i++){
-        var chunk=file.slice(i*chunkSize,Math.min(file.size,(i+1)*chunkSize));
-        var r=await fetch('/api/groups/'+gid+'/messages/large-upload/chunk',{method:'POST',headers:{Authorization:'Bearer '+T,'Content-Type':'application/octet-stream','X-Upload-Id':uploadId,'X-Chunk-Index':String(i),'X-Chunk-Total':String(total)},body:chunk});
-        var d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.error||'Ошибка загрузки части файла');
-    }
-    var r2=await api('/api/groups/'+gid+'/messages/large-upload/complete',{method:'POST',body:Object.assign({upload_id:uploadId,total_chunks:total,file_name:file.name,file_type:file.type||'application/octet-stream'},meta||{})});
-    var d2=await r2.json();if(!r2.ok)throw new Error(d2.error||'Не удалось завершить загрузку файла');return d2;
+    var fd=new FormData();if(text)fd.append('message_text',text);if(file){fd.append('file',file);if(file.type.startsWith('video/'))fd.append('media_kind','video');else if(file.type.startsWith('image/'))fd.append('media_kind','image');else if(file.type.startsWith('audio/'))fd.append('media_kind','audio');}
+    try{var r=await api('/api/groups/'+gid+'/messages',{method:'POST',body:fd});var d=await r.json();if(!r.ok)throw new Error(d.error||'Ошибка');inp.value='';fi.value='';lgroupMessages(gid);}catch(e){alert(e.message);}
 }
 function showGroupMembers(gid){
     api('/api/groups/'+gid).then(function(r){return r.json()}).then(function(d){
@@ -1962,7 +1956,7 @@ function lcl(){
     ct=null;if(ti){clearInterval(ti);ti=null}pastedFiles=[];cachedMessages={};selfDestructMode=false;photoSendMode=null;closeChatFullscreen();
     api('/api/friends').then(function(r){return r.json()}).then(function(d){
         var h='<div class="panel"><h2>Чаты</h2><div class="user-list">';
-        if((d.friends||[]).length)d.friends.forEach(function(f){h+='<div class="user-item"><div class="user-info"><div class="avatar-sm" onclick="viewUserAvatars('+f.id+',\''+f.username+'\')">'+av(f.avatar)+'</div><span>'+f.username+'</span></div><button class="btn" onclick="event.stopPropagation();oc('+f.id+',\''+f.username+'\',\''+(f.avatar||'')+'\')">Открыть</button></div>'});
+        if((d.friends||[]).length)d.friends.forEach(function(f){h+='<div class="user-item"><div class="user-info"><div class="avatar-sm" onclick="viewUserAvatars('+f.id+',\''+f.username+'\')">'+av(f.avatar)+'</div><span>'+f.username+'</span></div><button class="btn btn-gray call-list-btn" title="Аудиозвонок" onclick="event.stopPropagation();startCall('+f.id+',false)">☎</button><button class="btn btn-gray call-list-btn" title="Видеозвонок" onclick="event.stopPropagation();startCall('+f.id+',true)">▣</button><button class="btn" onclick="event.stopPropagation();oc('+f.id+',\''+f.username+'\',\''+(f.avatar||'')+'\')">Открыть</button></div>'});
         else h+='<div class="empty">Добавьте друзей</div>';
         h+='</div></div>';document.getElementById('tc').innerHTML=h;
     });
@@ -1986,13 +1980,10 @@ function oc(id,name,avatar){
     '<div class="avatar-sm" onclick="viewUserAvatars('+id+',\''+name+'\')">'+av(avatar)+'</div>'+
     '<div><h2>'+name+'</h2>'+
     '<div class="chat-status" style="font-size:9px;color:var(--text-muted);margin-top:-2px">загрузка...</div></div>'+
-    '<button class="btn btn-gray" onclick="showPinned('+id+')" style="font-size:9px;padding:4px 8px" title="Закреплённые"><span class="chat-icon">'+uiIcon('pin')+'</span></button>'+
-    '<button class="btn btn-gray" onclick="openMediaModal('+id+')" style="font-size:9px;padding:4px 8px" title="Медиа"><span class="chat-icon">'+uiIcon('image')+'</span></button>'+
-    '<button class="btn btn-gray" onclick="startCall(id,false)" style="font-size:9px;padding:4px 8px" title="Аудиозвонок">📞</button>'+
-    '<button class="btn btn-gray" onclick="startCall(id,true)" style="font-size:9px;padding:4px 8px" title="Видеозвонок">🎥</button>'+
-    '<button class="btn btn-gray" onclick="toggleSearch()" style="font-size:9px;padding:4px 8px" title="Поиск"><span class="chat-icon">'+uiIcon('search')+'</span></button>'+
-    '<button class="btn btn-gray" onclick="closeChatFullscreen()" style="font-size:9px;padding:4px 10px">← Назад</button>'+
+    '<button class="chat-menu-toggle" onclick="toggleChatHeaderTools()" title="Действия чата" aria-label="Действия чата">☰</button>'+
+    '<button class="btn btn-gray" onclick="closeChatFullscreen()" style="font-size:10px;padding:6px 10px">← Назад</button>'+
     '</div>'+
+    '<div class="chat-header-tools" id="chatHeaderTools"><button class="btn btn-gray" onclick="showPinned('+id+')">📌 Закреплённые</button><button class="btn btn-gray" onclick="openMediaModal('+id+')">🖼️ Медиа</button><button class="btn btn-gray" onclick="toggleSearch()">🔎 Поиск</button></div>'+
     '<div class="chat-search-bar" id="chatSearchBar"><input type="text" id="searchInput" placeholder="Поиск сообщений..." oninput="doSearch()"><span class="search-count" id="searchCount"></span><div class="search-nav"><button onclick="prevSearch()">▲</button><button onclick="nextSearch()">▼</button><button onclick="closeSearch()">✕</button></div></div>'+
     '<div class="msg-actions-bar" id="msgActions"><span id="selectedCount" style="font-size:10px;color:var(--accent-light);font-weight:600">0</span> выделено <button class="btn btn-red" onclick="deleteSelected(\'me\')">🗑️ Удалить у себя</button><button class="btn btn-red" onclick="deleteSelected(\'all\')">🗑️ Удалить у всех</button><button class="btn btn-gray" onclick="forwardSelected()">📨 Переслать</button><button class="btn btn-gray" onclick="pinSelected(false)">📌 Закрепить для всех</button><button class="btn btn-gray" onclick="pinSelected(true)">🔒 Закрепить только себе</button><button class="btn btn-gray" onclick="unpinSelected()">📌 Открепить</button><button class="btn btn-gray" onclick="clearSelection()">✕ Снять выделение</button></div>'+
     '<div class="chat-container"><div class="chat-messages" id="cm"><div class="empty">Загрузка...</div></div>'+
@@ -2018,6 +2009,8 @@ function oc(id,name,avatar){
     '</div>';
     
     document.body.appendChild(fs);
+    updateChatSize();
+    var chatMsgArea=fs.querySelector('.chat-messages');if(chatMsgArea){chatMsgArea.addEventListener('dblclick',function(ev){var sel=window.getSelection&&window.getSelection();if(sel&&String(sel).trim()){var text=String(sel).trim();if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(function(){showToast('Текст скопирован');}).catch(function(){});}});}
     
     document.getElementById('ab').onclick=function(){document.getElementById('cf').click()};
     document.getElementById('cf').onchange=function(e){var files=e.target.files;for(var i=0;i<files.length;i++)addPastedFile(files[i]);updatePastePreview()};
@@ -2682,12 +2675,20 @@ function editMessage(msgId) {
 }
 
 // ===== ИЗМЕНЕНИЕ РАЗМЕРА ЧАТА (ТОЛЬКО ДЛЯ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ) =====
+function showToast(message){var t=document.getElementById('chatCopyToast');if(!t){t=document.createElement('div');t.id='chatCopyToast';t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--bg-card);color:var(--text);border:1px solid var(--border);padding:8px 14px;border-radius:8px;z-index:9999;font-size:12px';document.body.appendChild(t);}t.textContent=message;t.style.display='block';setTimeout(function(){t.style.display='none';},1400);}
+function toggleChatHeaderTools(){var el=document.getElementById('chatHeaderTools');if(el)el.classList.toggle('open');}
+function loadAdminStorage(){api('/api/admin/storage').then(function(r){return r.json()}).then(function(d){var el=document.getElementById('adminStorageStats');if(!el)return;var mb=(Number(d.bytes||0)/1048576);el.innerHTML='<p style="font-size:12px">Занято по данным БД: <b>'+mb.toFixed(2)+' МБ</b> · файлов/вложений: <b>'+Number(d.file_count||0)+'</b></p><p style="font-size:10px;color:var(--text-muted)">Учитывается размер файлов, записанный в базе. Фактический лимит Cloudinary может отличаться.</p>';}).catch(function(){var el=document.getElementById('adminStorageStats');if(el)el.textContent='Не удалось получить статистику';});}
+function cleanupOldFiles(){var days=Number((document.getElementById('cleanupDays')||{}).value)||180;if(days<30){alert('Минимальный срок — 30 дней, чтобы случайно не удалить новые файлы.');return;}if(!confirm('Удалить вложения старше '+days+' дней? Файлы и вложения в старых сообщениях станут недоступны.'))return;api('/api/admin/storage/cleanup',{method:'POST',body:{days:days}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка очистки');return d;});}).then(function(d){alert('Очистка завершена. Обработано записей: '+d.deleted);loadAdminStorage();}).catch(function(e){alert(e.message||'Ошибка очистки');});}
+
 function updateChatSize() {
-    var messages = document.querySelectorAll('.msg');
-    var sizePercent = chatMaxWidth + '%';
-    messages.forEach(function(msg) {
-        msg.style.maxWidth = sizePercent;
-        msg.style.fontSize = chatFontSize + 'px';
+    /* Не меняем inline-стили каждого сообщения: это вызывало повторный reflow и
+       заметное мигание/дёргание уже отрисованных сообщений. Меняем только две
+       CSS-переменные на контейнере сообщений, поэтому браузер применяет размер
+       согласованно ко всему списку. */
+    var containers = document.querySelectorAll('.chat-messages');
+    containers.forEach(function(container) {
+        container.style.setProperty('--chat-msg-max-width', chatMaxWidth + '%');
+        container.style.setProperty('--chat-msg-font-size', chatFontSize + 'px');
     });
     localStorage.setItem('chatFontSize', chatFontSize);
     localStorage.setItem('chatMaxWidth', chatMaxWidth);
@@ -2703,12 +2704,12 @@ function updateChatSize() {
 }
 
 function changeFontSize(value) {
-    chatFontSize = parseInt(value);
+    chatFontSize = Math.max(10, Math.min(18, parseInt(value,10)||13));
     updateChatSize();
 }
 
 function changeMaxWidth(value) {
-    chatMaxWidth = parseInt(value);
+    chatMaxWidth = Math.max(40, Math.min(85, parseInt(value,10)||65));
     updateChatSize();
 }
 
@@ -3028,7 +3029,7 @@ function lm(id,silent,callback){
         if(callback)callback();
         
         if (typeof updateChatSize === 'function') {
-            setTimeout(updateChatSize, 100);
+            updateChatSize();
         }
         
         api('/api/user/status/' + id).then(function(r){return r.json()}).then(function(status){
@@ -3403,29 +3404,15 @@ function getMediaDuration(file) {
     });
 }
 
-function makeUploadId(){
-    if(window.crypto&&crypto.randomUUID)return crypto.randomUUID().replace(/-/g,'');
-    return 'u'+Date.now().toString(36)+Math.random().toString(36).slice(2)+Date.now().toString(36);
-}
-async function uploadLargePrivate(chatId,file,meta){
-    var chunkSize=5*1024*1024,total=Math.ceil(file.size/chunkSize),uploadId=makeUploadId();
-    for(var i=0;i<total;i++){
-        var chunk=file.slice(i*chunkSize,Math.min(file.size,(i+1)*chunkSize));
-        var r=await fetch('/api/messages/'+chatId+'/large-upload/chunk',{method:'POST',headers:{Authorization:'Bearer '+T,'Content-Type':'application/octet-stream','X-Upload-Id':uploadId,'X-Chunk-Index':String(i),'X-Chunk-Total':String(total)},body:chunk});
-        var d={};try{d=await r.json()}catch(e){} if(!r.ok)throw new Error(d.error||'Ошибка загрузки части файла');
-    }
-    var r2=await api('/api/messages/'+chatId+'/large-upload/complete',{method:'POST',body:Object.assign({upload_id:uploadId,total_chunks:total,file_name:file.name,file_type:file.type||'application/octet-stream'},meta||{})});
-    var d2=await r2.json();if(!r2.ok)throw new Error(d2.error||'Не удалось завершить загрузку файла');return d2;
-}
 async function sendFile(id,file){
-    var duration=await getMediaDuration(file);
-    var meta={};if(duration)meta.duration_seconds=String(duration);
-    meta.media_kind=file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':file.type.startsWith('image/')?'image':'file';
-    try{
-        if(file.size>=15*1024*1024){await uploadLargePrivate(id,file,meta);lm(id);return;}
-        var fd=new FormData();fd.append('file',file);if(duration)fd.append('duration_seconds',String(duration));fd.append('media_kind',meta.media_kind);
-        var r=await api('/api/messages/'+id,{method:'POST',body:fd});if(!r.ok)throw new Error('Ошибка отправки файла');lm(id);
-    }catch(err){console.error('Ошибка отправки файла:',err);alert('Не удалось отправить файл: '+(err.message||'неизвестная ошибка'));}
+    var fd=new FormData(); fd.append('file',file);
+    var duration = await getMediaDuration(file);
+    if (duration) fd.append('duration_seconds', String(duration));
+    if (file.type.startsWith('video/')) fd.append('media_kind','video');
+    else if (file.type.startsWith('audio/')) fd.append('media_kind','audio');
+    else if (file.type.startsWith('image/')) fd.append('media_kind','image');
+    else fd.append('media_kind','file');
+    api('/api/messages/'+id,{method:'POST',body:fd}).then(function(){ lm(id); }).catch(function(err){ console.error('Ошибка отправки файла:', err); alert('Ошибка отправки файла.'); });
 }
 
 function logout(){
@@ -3520,7 +3507,7 @@ function showStickerPacks(){
       var packs=d.packs||[],box=document.getElementById('myStickerPacksPreview');
       if(!box||!packs.length)return;
       var h='<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">Ваши паки</div><div class="sticker-packs-grid">';
-      packs.forEach(function(p){var icon=p.cover_url?'<img src="'+escapeHtml(p.cover_url)+'" alt="">':'<span>⭐</span>';h+='<div class="sticker-pack-card" onclick="openMyStickerPack('+p.id+',\''+escapeHtml(p.name)+'\')"><div class="pack-icon" style="overflow:hidden">'+icon+'</div><div class="pack-name">'+escapeHtml(p.name)+'</div></div>';});
+      packs.forEach(function(p){var icon=p.cover_url?'<img src="'+escapeHtml(p.cover_url)+'" alt="">':'<span>⭐</span>';h+='<div class="sticker-pack-card" style="position:relative"><button class="btn btn-red" style="position:absolute;right:4px;top:4px;z-index:2;padding:2px 6px" title="Удалить пак" onclick="event.stopPropagation();deleteMyStickerPack('+p.id+',\''+escapeHtml(p.name)+'\')">×</button><div onclick="openMyStickerPack('+p.id+',\''+escapeHtml(p.name)+'\')"><div class="pack-icon" style="overflow:hidden">'+icon+'</div><div class="pack-name">'+escapeHtml(p.name)+'</div></div></div>'; });
       h+='</div>';box.innerHTML=h;
     }).catch(function(){});
 }
@@ -3571,6 +3558,8 @@ function createMyStickerPack(){
     files.forEach(function(file){fd.append('stickers',file,file.name);});
     api('/api/sticker-packs',{method:'POST',body:fd}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка');return d;})}).then(function(){alert('✅ Пак создан');showStickerPacks();}).catch(function(e){alert('❌ '+(e.message||'Не удалось создать пак'));});
 }
+
+function deleteMyStickerPack(packId,packName){if(!confirm('Удалить свой пак «'+packName+'» вместе со всеми стикерами?'))return;api('/api/sticker-packs/'+packId,{method:'DELETE'}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Не удалось удалить пак');return d;});}).then(function(){showStickerPacks();}).catch(function(e){alert(e.message||'Ошибка удаления');});}
 
 function openMyStickerPack(packId,packName){
     document.getElementById('stickerModalTitle').textContent=packName;

@@ -21,10 +21,6 @@ app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
-// Large-file chunk uploads use small application/octet-stream requests so a 40+ MB
-// file does not have to stay inside one long multipart request through Render.
-app.use('/api/messages', express.raw({ type: 'application/octet-stream', limit: '6mb' }));
-app.use('/api/groups', express.raw({ type: 'application/octet-stream', limit: '6mb' }));
 app.use(express.static('public'));
 
 // ===== ПРОВЕРКА ПЕРЕМЕННЫХ =====
@@ -62,6 +58,10 @@ const cloudinaryStorage = new CloudinaryStorage({
       folder: isAvatar ? 'vero_avatars' : (isSticker ? 'vero_stickers' : 'vero_messenger'),
       resource_type: isAvatar ? 'image' : 'auto'
     };
+    // Keep a recognizable source filename in Cloudinary while avoiding unsafe characters.
+    const ext = path.extname(file.originalname || '').slice(0, 16);
+    const base = path.basename(file.originalname || 'file', ext).normalize('NFKD').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'file';
+    options.public_id = base + '_' + uuid().slice(0, 8) + ext;
     if (isAvatar) options.transformation = [{ width: 200, height: 200, crop: 'limit' }];
     return options;
   }
@@ -77,34 +77,6 @@ const uploadAvatar = multer({
   storage: cloudinaryStorage,
   limits: { fileSize: 5 * 1024 * 1024 }
 });
-
-const LARGE_UPLOAD_DIR = path.join('/tmp', 'vero-large-uploads');
-try { fs.mkdirSync(LARGE_UPLOAD_DIR, { recursive: true }); } catch (e) {}
-const LARGE_UPLOAD_THRESHOLD = 15 * 1024 * 1024;
-const LARGE_UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024;
-
-function largeUploadDir(userId, uploadId) {
-  return path.join(LARGE_UPLOAD_DIR, String(userId), String(uploadId));
-}
-function validUploadId(v) {
-  return /^[A-Za-z0-9_-]{16,100}$/.test(String(v || ''));
-}
-function safeLargeFileName(name) {
-  return String(name || 'file').replace(/[\\\r\n]/g, '_').replace(/[<>:"/\|?*]/g, '_').trim() || 'file';
-}
-async function finishLargeCloudinaryUpload(filePath, originalName, mimeType) {
-  return await cloudinary.uploader.upload_large(filePath, {
-    folder: 'vero_messenger',
-    resource_type: 'auto',
-    use_filename: true,
-    unique_filename: true,
-    filename_override: safeLargeFileName(originalName),
-    context: { original_name: safeLargeFileName(originalName), mime_type: mimeType || 'application/octet-stream' }
-  });
-}
-function cleanupLargeUpload(dir) {
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
-}
 
 
 // ===== БАЗА ДАННЫХ =====
@@ -323,6 +295,7 @@ async function startDB() {
     "ALTER TABLE messages ADD COLUMN IF NOT EXISTS duration_seconds DOUBLE PRECISION DEFAULT NULL",
     "ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_kind TEXT DEFAULT NULL",
     "ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size BIGINT DEFAULT 0",
+    "ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()",
     "CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(sender_id, receiver_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_messages_receiver_read ON messages(receiver_id, is_read)",
     "CREATE INDEX IF NOT EXISTS idx_friends_users ON friends(from_user, to_user, status)",
@@ -572,6 +545,41 @@ app.get('/api/admin/stats', auth, adminAuth, async function(req, res) {
   });
 });
 
+app.get('/api/admin/storage', auth, adminAuth, async function(req, res) {
+  try {
+    const files = await dbGet("SELECT COALESCE(SUM(file_size),0) AS bytes, COUNT(*) AS count FROM files");
+    const messages = await dbGet("SELECT COALESCE(SUM(file_size),0) AS bytes, COUNT(*) AS count FROM messages WHERE file_path IS NOT NULL");
+    const groups = await dbGet("SELECT COALESCE(SUM(file_size),0) AS bytes, COUNT(*) AS count FROM group_messages WHERE file_path IS NOT NULL");
+    res.json({ bytes: Number(files.bytes||0)+Number(messages.bytes||0)+Number(groups.bytes||0), file_count:Number(files.count||0)+Number(messages.count||0)+Number(groups.count||0), files_bytes:Number(files.bytes||0), messages_bytes:Number(messages.bytes||0), groups_bytes:Number(groups.bytes||0) });
+  } catch(e) { console.error('admin storage stats',e); res.status(500).json({error:'Не удалось получить статистику хранилища'}); }
+});
+
+app.post('/api/admin/storage/cleanup', auth, adminAuth, async function(req, res) {
+  try {
+    const days = Math.max(30, Math.min(3650, Number(req.body.days)||180));
+    const cutoff = new Date(Date.now()-days*86400000);
+    const oldFiles = await dbAll('SELECT id,filename FROM files WHERE upload_date < ?', [cutoff]);
+    const oldMessages = await dbAll('SELECT id,file_path FROM messages WHERE file_path IS NOT NULL AND created_at < ?', [cutoff]);
+    const oldGroupMessages = await dbAll('SELECT id,file_path FROM group_messages WHERE file_path IS NOT NULL AND created_at < ?', [cutoff]);
+    // Delete cloud resources before removing their database references.
+    const destroyUrl = async url => {
+      if (!url || !String(url).includes('cloudinary.com')) return;
+      try {
+        const m=String(url).match(/\/(image|video|raw)\/upload\/(?:v\d+\/)?(.+)$/);
+        if(m && m[2]) { let publicId=decodeURIComponent(m[2]).split('?')[0]; if(m[1]!=='raw') publicId=publicId.replace(/\.[a-zA-Z0-9]+$/,''); await cloudinary.uploader.destroy(publicId, {resource_type:m[1]}); }
+      } catch(e) { console.warn('Cloudinary cleanup skipped',e.message); }
+    };
+    for(const f of oldFiles) await destroyUrl(f.filename);
+    for(const f of oldMessages) await destroyUrl(f.file_path);
+    for(const f of oldGroupMessages) await destroyUrl(f.file_path);
+    if(oldFiles.length) await dbRun('DELETE FROM files WHERE upload_date < ?', [cutoff]);
+    if(oldMessages.length) await dbRun('UPDATE messages SET file_path=NULL,file_name=NULL,file_type=NULL,file_size=0 WHERE file_path IS NOT NULL AND created_at < ?', [cutoff]);
+    if(oldGroupMessages.length) await dbRun('UPDATE group_messages SET file_path=NULL,file_name=NULL,file_type=NULL,file_size=0 WHERE file_path IS NOT NULL AND created_at < ?', [cutoff]);
+    backupNow('очистка старых файлов');
+    res.json({ok:true,deleted:oldFiles.length+oldMessages.length+oldGroupMessages.length,days});
+  } catch(e) { console.error('admin storage cleanup',e); res.status(500).json({error:'Не удалось очистить старые файлы'}); }
+});
+
 app.get('/api/admin/groups', auth, adminAuth, async function(req, res) {
   const groups = await dbAll(`
     SELECT g.id, g.name, g.owner_id, g.created_at, u.username AS owner_username,
@@ -801,7 +809,7 @@ app.post('/api/friends/accept/:uid', auth, async function(req, res) {
 });
 
 app.post('/api/friends/reject/:uid', auth, async function(req, res) {
-  await dbRun("DELETE FROM friends WHERE from_user=? AND to_user=? AND status='pending'", [req.params.uid, req.userId]);
+  await dbRun("UPDATE friends SET status='rejected' WHERE from_user=? AND to_user=? AND status='pending'", [req.params.uid, req.userId]);
   backupNow('отклонение друга');
   res.json({ ok: true });
 });
@@ -819,72 +827,20 @@ app.get('/api/friends', auth, async function(req, res) {
   res.json({ friends: unique });
 });
 
+app.get('/api/friends/status/:uid', auth, async function(req, res) {
+  const uid=parseInt(req.params.uid);
+  const row=await dbGet('SELECT from_user,to_user,status FROM friends WHERE (from_user=? AND to_user=?) OR (from_user=? AND to_user=?) ORDER BY id DESC LIMIT 1',[req.userId,uid,uid,req.userId]);
+  if(!row) return res.json({status:'none'});
+  if(row.status==='accepted') return res.json({status:'accepted'});
+  if(row.status==='rejected') return res.json({status:row.from_user===req.userId?'rejected':'none'});
+  return res.json({status:row.from_user===req.userId?'sent':'received'});
+});
+
 app.get('/api/friends/requests', auth, async function(req, res) {
   res.json({ requests: await dbAll("SELECT f.id, f.from_user, u.username, u.avatar FROM friends f JOIN users u ON f.from_user=u.id WHERE f.to_user=? AND f.status='pending'", [req.userId]) });
 });
 
 // ===== СООБЩЕНИЯ (исправлено) =====
-app.post('/api/messages/:fid/large-upload/chunk', auth, async function(req, res) {
-  try {
-    const fid = parseInt(req.params.fid);
-    const friend = await dbGet("SELECT * FROM friends WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?)) AND status='accepted'", [req.userId, fid, fid, req.userId]);
-    if (!friend) return res.status(403).json({ error: 'Не друзья' });
-    const uploadId = String(req.headers['x-upload-id'] || '');
-    const index = Number(req.headers['x-chunk-index']);
-    const total = Number(req.headers['x-chunk-total']);
-    if (!validUploadId(uploadId) || !Number.isInteger(index) || index < 0 || !Number.isInteger(total) || total < 1 || index >= total) {
-      return res.status(400).json({ error: 'Некорректные параметры загрузки' });
-    }
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0 || req.body.length > LARGE_UPLOAD_CHUNK_SIZE + 1024) return res.status(400).json({ error: 'Пустой или слишком большой фрагмент' });
-    const dir = largeUploadDir(req.userId, uploadId);
-    fs.mkdirSync(dir, { recursive: true });
-    const partPath = path.join(dir, String(index) + '.part');
-    fs.writeFileSync(partPath, req.body);
-    res.json({ ok: true, index: index, total: total });
-  } catch (e) {
-    console.error('❌ Ошибка chunk upload:', e);
-    res.status(500).json({ error: e.message || 'Ошибка загрузки фрагмента' });
-  }
-});
-
-app.post('/api/messages/:fid/large-upload/complete', auth, async function(req, res) {
-  let dir = null;
-  try {
-    const fid = parseInt(req.params.fid);
-    const friend = await dbGet("SELECT * FROM friends WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?)) AND status='accepted'", [req.userId, fid, fid, req.userId]);
-    if (!friend) return res.status(403).json({ error: 'Не друзья' });
-    const uploadId = String(req.body && req.body.upload_id || '');
-    const total = Number(req.body && req.body.total_chunks);
-    const originalName = safeLargeFileName(req.body && req.body.file_name);
-    const mimeType = String(req.body && req.body.file_type || 'application/octet-stream');
-    if (!validUploadId(uploadId) || !Number.isInteger(total) || total < 1 || total > 1000) return res.status(400).json({ error: 'Некорректная загрузка' });
-    dir = largeUploadDir(req.userId, uploadId);
-    const finalPath = path.join(dir, originalName);
-    const out = fs.createWriteStream(finalPath);
-    for (let i = 0; i < total; i++) {
-      const part = path.join(dir, String(i) + '.part');
-      if (!fs.existsSync(part)) { out.destroy(); return res.status(400).json({ error: 'Не хватает фрагмента №' + (i + 1) }); }
-      const data = fs.readFileSync(part);
-      await new Promise((resolve, reject) => out.write(data, err => err ? reject(err) : resolve()));
-    }
-    await new Promise((resolve, reject) => { out.end(err => err ? reject(err) : resolve()); });
-    const stat = fs.statSync(finalPath);
-    if (!stat.size) return res.status(400).json({ error: 'Файл пустой' });
-    const result = await finishLargeCloudinaryUpload(finalPath, originalName, mimeType);
-    const durationSeconds = req.body.duration_seconds ? Number(req.body.duration_seconds) : null;
-    const mediaKind = mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : mimeType.startsWith('image/') ? 'image' : 'file';
-    const isSelfDestruct = req.body.is_self_destruct === true || req.body.is_self_destruct === 'true' ? 1 : 0;
-    await dbRun('INSERT INTO messages (sender_id, receiver_id, message_text, file_name, file_type, file_path, file_size, duration_seconds, media_kind, is_self_destruct, reply_to, reply_text, reply_sender) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [req.userId, fid, String(req.body.message_text || ''), originalName, mimeType, result.secure_url || result.url, stat.size, durationSeconds, mediaKind, isSelfDestruct, req.body.reply_to || null, req.body.reply_text || null, req.body.reply_sender || null]);
-    res.json({ ok: true, url: result.secure_url || result.url, file_name: originalName, file_size: stat.size });
-  } catch (e) {
-    console.error('❌ Ошибка завершения большой загрузки:', e);
-    res.status(500).json({ error: e.message || 'Не удалось завершить загрузку файла' });
-  } finally {
-    if (dir) cleanupLargeUpload(dir);
-  }
-});
-
 app.post('/api/messages/:fid', auth, upload.single('file'), async function(req, res) {
   try {
     const fid = parseInt(req.params.fid);
@@ -1232,52 +1188,6 @@ app.get('/api/groups/:id/messages', auth, async function(req, res) {
   if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
   const messages = await dbAll(`SELECT gm.*,u.username,u.avatar FROM group_messages gm JOIN users u ON u.id=gm.sender_id WHERE gm.group_id=? ORDER BY gm.created_at ASC`, [gid]);
   res.json({ messages: messages });
-});
-
-app.post('/api/groups/:id/messages/large-upload/chunk', auth, async function(req, res) {
-  try {
-    const gid = Number(req.params.id);
-    if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
-    const uploadId = String(req.headers['x-upload-id'] || '');
-    const index = Number(req.headers['x-chunk-index']);
-    const total = Number(req.headers['x-chunk-total']);
-    if (!validUploadId(uploadId) || !Number.isInteger(index) || index < 0 || !Number.isInteger(total) || total < 1 || index >= total) return res.status(400).json({ error: 'Некорректные параметры загрузки' });
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0 || req.body.length > LARGE_UPLOAD_CHUNK_SIZE + 1024) return res.status(400).json({ error: 'Пустой или слишком большой фрагмент' });
-    const dir = largeUploadDir(req.userId, 'g' + gid + '_' + uploadId);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, String(index) + '.part'), req.body);
-    res.json({ ok: true, index: index, total: total });
-  } catch (e) { console.error('❌ Ошибка group chunk upload:', e); res.status(500).json({ error: e.message || 'Ошибка загрузки фрагмента' }); }
-});
-
-app.post('/api/groups/:id/messages/large-upload/complete', auth, async function(req, res) {
-  let dir = null;
-  try {
-    const gid = Number(req.params.id);
-    if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
-    const uploadId = String(req.body && req.body.upload_id || '');
-    const total = Number(req.body && req.body.total_chunks);
-    const originalName = safeLargeFileName(req.body && req.body.file_name);
-    const mimeType = String(req.body && req.body.file_type || 'application/octet-stream');
-    if (!validUploadId(uploadId) || !Number.isInteger(total) || total < 1 || total > 1000) return res.status(400).json({ error: 'Некорректная загрузка' });
-    dir = largeUploadDir(req.userId, 'g' + gid + '_' + uploadId);
-    const finalPath = path.join(dir, originalName);
-    const out = fs.createWriteStream(finalPath);
-    for (let i = 0; i < total; i++) {
-      const part = path.join(dir, String(i) + '.part');
-      if (!fs.existsSync(part)) { out.destroy(); return res.status(400).json({ error: 'Не хватает фрагмента №' + (i + 1) }); }
-      const data = fs.readFileSync(part);
-      await new Promise((resolve, reject) => out.write(data, err => err ? reject(err) : resolve()));
-    }
-    await new Promise((resolve, reject) => out.end(err => err ? reject(err) : resolve()));
-    const stat = fs.statSync(finalPath);
-    const result = await finishLargeCloudinaryUpload(finalPath, originalName, mimeType);
-    const kind = mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : mimeType.startsWith('image/') ? 'image' : 'file';
-    const duration = req.body.duration_seconds ? Number(req.body.duration_seconds) : null;
-    const msg = await dbGet(`INSERT INTO group_messages (group_id,sender_id,message_text,file_name,file_type,file_path,file_size,duration_seconds,media_kind) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id`, [gid,req.userId,String(req.body.message_text || '').trim() || null,originalName,mimeType,result.secure_url || result.url,stat.size,duration,kind]);
-    res.json({ ok:true, id:msg.id, file_name:originalName, file_size:stat.size });
-  } catch(e) { console.error('❌ Ошибка завершения group large upload:',e); res.status(500).json({error:e.message||'Не удалось завершить загрузку файла'}); }
-  finally { if (dir) cleanupLargeUpload(dir); }
 });
 
 app.post('/api/groups/:id/messages', auth, upload.single('file'), async function(req, res) {
