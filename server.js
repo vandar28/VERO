@@ -738,21 +738,54 @@ function safeDownloadName(name) {
   return name || 'file';
 }
 async function proxyCloudinaryFile(res, url, filename, contentType) {
-  if (!url || !/^https?:\/\//i.test(String(url))) return res.status(404).json({error:'Файл недоступен'});
+  if (!url || !/^https?:\/\//i.test(String(url))) {
+    return res.status(404).json({ error: 'Файл недоступен: отсутствует корректная ссылка' });
+  }
+  const sourceUrl = String(url).trim();
+  const candidates = [sourceUrl];
+  // Cloudinary's auto resource type may serve non-image documents as raw assets.
+  // Some older rows were saved with a delivery URL whose resource_type differs;
+  // retry the alternate delivery path before declaring the new upload unavailable.
+  if (/res\.cloudinary\.com\//i.test(sourceUrl)) {
+    if (sourceUrl.includes('/image/upload/')) candidates.push(sourceUrl.replace('/image/upload/', '/raw/upload/'));
+    if (sourceUrl.includes('/raw/upload/')) candidates.push(sourceUrl.replace('/raw/upload/', '/image/upload/'));
+    if (sourceUrl.includes('/video/upload/')) candidates.push(sourceUrl.replace('/video/upload/', '/raw/upload/'));
+    if (sourceUrl.includes('/raw/upload/')) candidates.push(sourceUrl.replace('/raw/upload/', '/video/upload/'));
+  }
+  let upstream = null;
+  let lastStatus = 0;
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      const response = await fetch(candidate, { redirect: 'follow' });
+      if (response.ok && response.body) { upstream = response; break; }
+      lastStatus = response.status;
+      if (response.body) await response.body.cancel().catch(() => {});
+    } catch (e) {
+      console.warn('Источник файла недоступен:', e.message);
+    }
+  }
+  if (!upstream) {
+    console.error('Не удалось скачать Cloudinary-файл:', sourceUrl, 'HTTP:', lastStatus || 'network error');
+    return res.status(502).json({ error: 'Файл хранится, но хранилище не смогло его выдать. Попробуйте позже.' });
+  }
   try {
-    const upstream = await fetch(String(url), { redirect: 'follow' });
-    if (!upstream.ok || !upstream.body) return res.status(404).json({error:'Не удалось получить файл'});
     const name = safeDownloadName(filename);
+    const encodedName = encodeURIComponent(name).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
     res.status(200);
     res.setHeader('Content-Type', contentType || upstream.headers.get('content-type') || 'application/octet-stream');
-    res.setHeader('Content-Disposition', 'attachment; filename="download"; filename*=UTF-8\'\'' + encodeURIComponent(name));
+    res.setHeader('Content-Disposition', `attachment; filename="download"; filename*=UTF-8''${encodedName}`);
+    res.setHeader('Cache-Control', 'private, no-store');
     const len = upstream.headers.get('content-length');
     if (len) res.setHeader('Content-Length', len);
     const { Readable } = require('stream');
-    Readable.fromWeb(upstream.body).pipe(res);
+    Readable.fromWeb(upstream.body).on('error', err => {
+      console.error('Поток скачивания прерван:', err.message);
+      if (!res.headersSent) res.status(502);
+      res.end();
+    }).pipe(res);
   } catch (e) {
     console.error('Ошибка скачивания:', e);
-    if (!res.headersSent) res.status(500).json({error:'Ошибка скачивания файла'});
+    if (!res.headersSent) res.status(500).json({ error: 'Ошибка скачивания файла' });
     else res.end();
   }
 }
