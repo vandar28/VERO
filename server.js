@@ -271,6 +271,18 @@ async function startDB() {
     )
   `);
 
+  await dbRun(`CREATE TABLE IF NOT EXISTS group_message_reactions (
+    id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES group_messages(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, reaction TEXT NOT NULL,
+    UNIQUE(message_id,user_id,reaction)
+  )`);
+  await dbRun(`CREATE TABLE IF NOT EXISTS group_message_pins (
+    id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES group_messages(id) ON DELETE CASCADE,
+    group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE, pinned_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(message_id,group_id)
+  )`);
+  await dbRun(`ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS reply_to INTEGER REFERENCES group_messages(id) ON DELETE SET NULL`);
+
   await dbRun(`
     CREATE TABLE IF NOT EXISTS sticker_packs (
       id SERIAL PRIMARY KEY,
@@ -1186,7 +1198,7 @@ app.delete('/api/groups/:id', auth, async function(req, res) {
 app.get('/api/groups/:id/messages', auth, async function(req, res) {
   const gid = Number(req.params.id);
   if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
-  const messages = await dbAll(`SELECT gm.*,u.username,u.avatar FROM group_messages gm JOIN users u ON u.id=gm.sender_id WHERE gm.group_id=? ORDER BY gm.created_at ASC`, [gid]);
+  const messages = await dbAll(`SELECT gm.*,u.username,u.avatar, r.reactions, p.pinned FROM group_messages gm JOIN users u ON u.id=gm.sender_id LEFT JOIN (SELECT message_id,json_agg(json_build_object('reaction',reaction,'user_id',user_id)) AS reactions FROM group_message_reactions GROUP BY message_id) r ON r.message_id=gm.id LEFT JOIN (SELECT message_id,TRUE AS pinned FROM group_message_pins WHERE group_id=?) p ON p.message_id=gm.id WHERE gm.group_id=? ORDER BY gm.created_at ASC`, [gid,gid]);
   res.json({ messages: messages });
 });
 
@@ -1201,12 +1213,37 @@ app.post('/api/groups/:id/messages', auth, upload.single('file'), async function
       kind=fileType.startsWith('video/')?'video':fileType.startsWith('audio/')?'audio':fileType.startsWith('image/')?'image':'file';
     }
     if (!text && !req.file) return res.status(400).json({error:'Пустое сообщение'});
-    const msg=await dbGet(`INSERT INTO group_messages (group_id,sender_id,message_text,file_name,file_type,file_path,file_size,duration_seconds,media_kind) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id`, [gid,req.userId,text,fileName,fileType,filePath,fileSize,duration,kind]);
+    const msg=await dbGet(`INSERT INTO group_messages (group_id,sender_id,message_text,file_name,file_type,file_path,file_size,duration_seconds,media_kind,reply_to) VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id`, [gid,req.userId,text,fileName,fileType,filePath,fileSize,duration,kind,req.body.reply_to ? Number(req.body.reply_to) : null]);
     res.json({ok:true,id:msg.id});
   } catch(e) {
     console.error('Ошибка сообщения группы:',e);
     res.status(500).json({error:e.message||'Ошибка отправки'});
   }
+});
+
+// Реакции, закрепления и отправка стикеров в группах
+app.post('/api/groups/:id/messages/:mid/react', auth, async function(req,res){
+  const gid=Number(req.params.id), mid=Number(req.params.mid), reaction=String(req.body.reaction||'').slice(0,16);
+  if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа'});
+  if(!await dbGet('SELECT 1 FROM group_messages WHERE id=? AND group_id=?',[mid,gid])) return res.status(404).json({error:'Сообщение не найдено'});
+  await dbRun('INSERT INTO group_message_reactions(message_id,user_id,reaction) VALUES (?,?,?) ON CONFLICT DO NOTHING',[mid,req.userId,reaction]);
+  res.json({ok:true});
+});
+app.post('/api/groups/:id/messages/:mid/pin', auth, async function(req,res){
+  const gid=Number(req.params.id), mid=Number(req.params.mid);
+  if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа'});
+  if(!await dbGet('SELECT 1 FROM group_messages WHERE id=? AND group_id=?',[mid,gid])) return res.status(404).json({error:'Сообщение не найдено'});
+  await dbRun('INSERT INTO group_message_pins(message_id,group_id,pinned_by) VALUES (?,?,?) ON CONFLICT DO NOTHING',[mid,gid,req.userId]); res.json({ok:true});
+});
+app.get('/api/groups/:id/pins', auth, async function(req,res){
+  const gid=Number(req.params.id); if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа'});
+  const pins=await dbAll(`SELECT gm.id,gm.message_text,gm.file_name,gm.sender_id,gm.created_at,u.username FROM group_message_pins p JOIN group_messages gm ON gm.id=p.message_id JOIN users u ON u.id=gm.sender_id WHERE p.group_id=? ORDER BY p.created_at DESC`,[gid]); res.json({pins});
+});
+app.post('/api/groups/:id/sticker', auth, async function(req,res){
+  const gid=Number(req.params.id), url=String(req.body.url||''), name=String(req.body.name||'Стикер');
+  if(!(await isGroupMember(gid,req.userId))) return res.status(403).json({error:'Нет доступа'});
+  if(!/^https?:\/\//i.test(url) && !url.startsWith('/stickers/')) return res.status(400).json({error:'Некорректный стикер'});
+  await dbRun('INSERT INTO group_messages(group_id,sender_id,file_name,file_type,file_path,file_size,media_kind) VALUES (?,?,?,?,?,?,?)',[gid,req.userId,name,'image/png',url,0,'image']); res.json({ok:true});
 });
 
 // ===== ПОЛЬЗОВАТЕЛЬСКИЕ ПАКИ СТИКЕРОВ =====
