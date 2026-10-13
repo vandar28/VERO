@@ -475,6 +475,28 @@ app.post('/api/login', async function(req, res) {
   });
 });
 
+// Смена пароля из настроек безопасности аккаунта.
+app.post('/api/account/change-password', auth, async function(req, res) {
+  try {
+    const currentPassword = String((req.body || {}).current_password || '');
+    const newPassword = String((req.body || {}).new_password || '');
+    if (newPassword.length < 8) return res.status(400).json({ error: 'Новый пароль должен содержать не менее 8 символов.' });
+    if (newPassword.length > 200) return res.status(400).json({ error: 'Пароль слишком длинный.' });
+    const user = await dbGet('SELECT id, password, is_temp FROM users WHERE id=?', [req.userId]);
+    if (!user) return res.status(404).json({ error: 'Аккаунт не найден.' });
+    if (user.is_temp) return res.status(400).json({ error: 'У временного аккаунта нельзя сменить пароль. Зарегистрируйте постоянный аккаунт.' });
+    if (!currentPassword || !(await bcrypt.compare(currentPassword, user.password || ''))) {
+      return res.status(400).json({ error: 'Текущий пароль указан неверно.' });
+    }
+    const hash = await bcrypt.hash(newPassword, 12);
+    await dbRun('UPDATE users SET password=? WHERE id=?', [hash, req.userId]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Ошибка смены пароля:', e);
+    res.status(500).json({ error: 'Не удалось сменить пароль. Попробуйте позже.' });
+  }
+});
+
 // Удаление временного аккаунта
 app.post('/api/delete-temp-account', auth, async function(req, res) {
   const user = await dbGet('SELECT * FROM users WHERE id=? AND is_temp=1', [req.userId]);
@@ -778,16 +800,11 @@ async function proxyCloudinaryFile(res, url, filename, contentType) {
     const len = upstream.headers.get('content-length');
     if (len) res.setHeader('Content-Length', len);
     const { Readable } = require('stream');
-    const stream = (typeof Readable.fromWeb === 'function')
-      ? Readable.fromWeb(upstream.body)
-      : Readable.from((async function* () { for await (const chunk of upstream.body) yield chunk; })());
-    stream.on('error', err => {
+    Readable.fromWeb(upstream.body).on('error', err => {
       console.error('Поток скачивания прерван:', err.message);
       if (!res.headersSent) res.status(502);
       res.end();
-    });
-    res.on('close', () => { if (!res.writableEnded && upstream.body && typeof upstream.body.cancel === 'function') upstream.body.cancel().catch(() => {}); });
-    stream.pipe(res);
+    }).pipe(res);
   } catch (e) {
     console.error('Ошибка скачивания:', e);
     if (!res.headersSent) res.status(500).json({ error: 'Ошибка скачивания файла' });
@@ -1330,7 +1347,9 @@ app.use(function(err, req, res, next) {
     console.error('❌ Upload/API error:', err);
     const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
     return res.status(status).json({
-      error: err.message || 'Ошибка загрузки файла',
+      error: err.code === 'LIMIT_FILE_SIZE'
+        ? ('Файл слишком большой. Максимальный размер одного файла — ' + Math.round(Number(process.env.MAX_FILE_SIZE || 100)) + ' МБ.')
+        : (err.message || 'Ошибка загрузки файла'),
       code: err.code || 'UPLOAD_ERROR'
     });
   }

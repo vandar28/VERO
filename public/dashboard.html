@@ -1063,6 +1063,16 @@ body.chat-open #tc {
 .chat-theme-colors{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.chat-theme-color{min-width:0;padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--bg-input);display:flex;flex-direction:column;align-items:center;gap:8px}.chat-theme-color input[type=color]{width:68px;height:68px;border:0;padding:0;border-radius:50%;background:transparent;cursor:pointer;overflow:hidden}.chat-theme-color input[type=color]::-webkit-color-swatch-wrapper{padding:0}.chat-theme-color input[type=color]::-webkit-color-swatch{border:3px solid var(--bg-card);border-radius:50%}.chat-theme-hex{width:100%;font-size:11px;text-align:center;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);color:var(--text);padding:6px}
 .chat-theme-preview{padding:12px;border-radius:12px;min-height:86px;display:flex;flex-direction:column;gap:8px;background:var(--preview-bg,var(--bg-input));background-size:cover;background-position:center}.chat-theme-preview-bubble{font-size:12px;padding:8px 11px;border-radius:12px;max-width:82%;overflow-wrap:anywhere}.chat-theme-preview-bubble.received{align-self:flex-start;background:var(--preview-received,var(--bg-hover));color:var(--preview-received-text,var(--text))}.chat-theme-preview-bubble.sent{align-self:flex-end;background:var(--preview-sent,var(--accent));color:var(--preview-sent-text,#fff)}
 @media(max-width:420px){.chat-theme-colors{grid-template-columns:1fr 1fr}.chat-background-settings{padding:15px}}
+/* Security screen fills the viewport, including mobile safe areas. */
+#securityModal{position:fixed!important;inset:0!important;z-index:10070!important;padding:0!important;align-items:stretch!important;justify-content:stretch!important;background:rgba(4,8,14,.88)!important}
+#securityModal.active{display:flex!important}
+#securityModal>.modal{width:100%!important;max-width:none!important;height:100dvh!important;max-height:100dvh!important;box-sizing:border-box!important;margin:0!important;border:0!important;border-radius:0!important;padding:clamp(18px,4vw,36px)!important;overflow:auto!important;display:flex;flex-direction:column;justify-content:center;gap:8px}
+/* Group members overlay stays above the currently open chat, not the groups page. */
+#groupMembersModal{position:fixed!important;inset:0!important;z-index:10060!important;display:flex!important;align-items:stretch!important;justify-content:stretch!important;width:100%!important;max-width:none!important;height:100dvh!important;padding:0!important;margin:0!important;border:0!important;border-radius:0!important;background:rgba(4,8,14,.82)!important;backdrop-filter:blur(8px)}
+#groupMembersModal .modal-content{width:100%!important;max-width:none!important;height:100dvh!important;max-height:100dvh!important;min-height:100%!important;box-sizing:border-box!important;border:0!important;border-radius:0!important;margin:0!important;padding:clamp(14px,2.5vw,30px)!important;overflow:auto!important;display:flex;flex-direction:column;gap:12px}
+#groupMembersModal .user-list{overflow:auto;min-height:0;flex:1}
+#groupMembersModal h2{position:sticky;top:0;background:var(--bg-card);padding:8px 0;z-index:1}
+.chat-drop-active{outline:3px dashed var(--accent)!important;outline-offset:-6px;background-color:var(--accent-bg)!important}
 /* Full-screen chat theme editor: usable on desktop and mobile */
 #chatBgSettingsModal{position:fixed!important;inset:0!important;z-index:10050!important;display:flex!important;align-items:stretch!important;justify-content:stretch!important;padding:0!important;margin:0!important;background:rgba(4,8,14,.82)!important;backdrop-filter:blur(8px)}
 #chatBgSettingsModal .chat-background-settings{width:100%!important;max-width:none!important;height:100dvh!important;max-height:100dvh!important;min-height:100%!important;box-sizing:border-box!important;border:0!important;border-radius:0!important;padding:clamp(14px,2.5vw,30px)!important;overflow:auto!important;box-shadow:none!important;gap:clamp(12px,2vh,22px)!important}
@@ -1320,8 +1330,20 @@ body.chat-open #tc {
       <input type="range" min="40" max="85" value="65" id="maxWidthRange" oninput="changeMaxWidth(this.value)">
       <span class="size-value" id="maxWidthValue">65%</span>
     </div>
-    
+    <button class="upload-new-btn" onclick="openSecuritySettings()" style="margin-top:8px">🔐 Безопасность — сменить пароль</button>
     <button class="close-btn" onclick="closeSettings()">Закрыть</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="securityModal" style="z-index:10070">
+  <div class="modal">
+    <h2>🔐 Безопасность аккаунта</h2>
+    <p style="font-size:12px;color:var(--text-muted)">Введите текущий пароль и новый пароль. После смены пароля войдите заново.</p>
+    <label class="section-title" for="currentPassword">Текущий пароль</label><input id="currentPassword" type="password" autocomplete="current-password" style="width:100%;margin:8px 0 14px;padding:12px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:8px">
+    <label class="section-title" for="newPassword">Новый пароль</label><input id="newPassword" type="password" autocomplete="new-password" minlength="8" style="width:100%;margin:8px 0 14px;padding:12px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:8px">
+    <label class="section-title" for="confirmNewPassword">Повторите новый пароль</label><input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="8" style="width:100%;margin:8px 0 14px;padding:12px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:8px">
+    <button class="btn" id="savePasswordBtn" onclick="changePassword()" style="width:100%;margin-top:8px">Сменить пароль</button>
+    <button class="close-btn" onclick="closeSecuritySettings()">Назад</button>
   </div>
 </div>
 
@@ -1652,8 +1674,7 @@ function downloadByUrl(url,name){
 function downloadMessageFile(id,group){
     var url=group?('/api/group-messages/'+id+'/download'):('/api/messages/'+id+'/download');
     fetch(url,{headers:{Authorization:'Bearer '+T}}).then(function(r){if(!r.ok)throw new Error('Не удалось скачать файл');return r.blob().then(function(blob){
-        var cd=r.headers.get('Content-Disposition')||'',m=cd.match(/filename\*=UTF-8''([^;]+)/i),name='file';
-        try{name=m?decodeURIComponent(m[1]):'file'}catch(e){}
+        var cd=r.headers.get('Content-Disposition')||'',m=cd.match(/filename\*=UTF-8''([^;]+)/i),name=m?decodeURIComponent(m[1]):'file';
         var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.style.display='none';document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},1000);
     })}).catch(function(e){alert(e.message||'Ошибка скачивания')});
 }
@@ -1933,18 +1954,23 @@ function createGroupFromUI(){
     api('/api/groups',{method:'POST',body:{name:name,member_ids:ids}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка');return d;})}).then(lgroups).catch(function(e){alert(e.message);});
 }
 function openGroup(gid){
+    if(ti){clearInterval(ti);ti=null;}var existingChat=document.getElementById('chatFullscreen');if(existingChat)existingChat.remove();
     api('/api/groups/'+gid).then(function(r){return r.json()}).then(function(d){
         if(!d.group)return;
         ct={id:gid,name:d.group.name,avatar:d.group.avatar,group:true};
         document.getElementById('tc').style.display='none';document.body.classList.add('chat-open');
         var fs=document.createElement('div');fs.className='chat-fullscreen';fs.id='chatFullscreen';
-        fs.innerHTML='<div class="chat-panel"><div class="chat-header"><div class="avatar-sm">👥</div><div><h2>'+escapeHtml(d.group.name)+'</h2><div style="font-size:9px;color:var(--text-muted)">'+d.members.length+' участников</div></div><button class="btn btn-gray" onclick="showGroupMembers('+gid+')">👥 Участники</button><button class="btn btn-gray" onclick="showGroupChatSettings('+gid+')" title="Настройки чата">⚙️</button><button class="btn btn-gray" onclick="showGroupPins('+gid+')" title="Закреплённые">📌</button><button class="btn btn-gray" onclick="toggleGroupSearch()" title="Поиск сообщений">🔎</button>'+(Number(d.group.owner_id)===Number(U.id)?'<button class="btn btn-red" onclick="deleteOwnGroup('+gid+')">🗑️</button>':'')+'<button class="btn btn-gray" onclick="closeChatFullscreen()">← Назад</button></div><div class="chat-container"><div class="chat-search-bar" id="groupSearchBar" style="display:none;padding:8px"><input id="groupSearchInput" placeholder="Поиск сообщений..." oninput="filterGroupMessages()"><button class="btn btn-gray" onclick="toggleGroupSearch()">✕</button></div><div class="chat-messages" id="cm"><div class="empty">Загрузка...</div></div><div class="chat-input-area"><textarea id="mi" rows="1" maxlength="20000" placeholder="Сообщение..."></textarea><input type="file" id="cf" style="display:none"><button class="icon-btn" id="ab">📎</button><button class="icon-btn" onclick="openStickerModal()" title="Стикеры">😊</button><button class="voice-btn" id="voiceBtn" title="Голосовое сообщение">🎙️</button><button class="icon-btn" id="vidBtn" title="Записать видеосообщение">📹</button><button class="btn" id="sb">Отпр.</button></div><div class="recording-bar" id="recBar" style="display:none">⏺️ Запись...</div></div></div>';
+        fs.innerHTML='<div class="chat-panel"><div class="chat-header"><div class="avatar-sm">👥</div><div><h2>'+escapeHtml(d.group.name)+'</h2><div style="font-size:9px;color:var(--text-muted)">'+d.members.length+' участников</div></div><button class="btn btn-gray" onclick="showGroupMembers('+gid+')">👥 Участники</button><button class="btn btn-gray" onclick="showGroupChatSettings('+gid+')" title="Настройки чата">⚙️</button><button class="btn btn-gray" onclick="showGroupPins('+gid+')" title="Закреплённые">📌</button><button class="btn btn-gray" onclick="toggleGroupSearch()" title="Поиск сообщений">🔎</button>'+(Number(d.group.owner_id)===Number(U.id)?'<button class="btn btn-red" onclick="deleteOwnGroup('+gid+')">🗑️</button>':'')+'<button class="btn btn-gray" onclick="closeChatFullscreen()">← Назад</button></div><div class="chat-container"><div class="chat-search-bar" id="groupSearchBar" style="display:none;padding:8px"><input id="groupSearchInput" placeholder="Поиск сообщений..." oninput="filterGroupMessages()"><button class="btn btn-gray" onclick="toggleGroupSearch()">✕</button></div><div class="chat-messages" id="cm"><div class="empty">Загрузка...</div></div><div class="chat-input-area"><textarea id="mi" rows="1" maxlength="20000" placeholder="Сообщение..."></textarea><input type="file" id="cf" style="display:none"><button class="icon-btn" id="ab" title="Прикрепить файл"><span class="chat-icon">'+uiIcon('attach')+'</span></button><button class="icon-btn" id="stickerBtn" title="Стикеры"><span class="chat-icon">'+uiIcon('sticker')+'</span></button><button class="voice-btn" id="voiceBtn" title="Голосовое сообщение"><span class="chat-icon">'+uiIcon('mic')+'</span></button><button class="icon-btn" id="vidBtn" title="Записать видеосообщение"><span class="chat-icon">'+uiIcon('video')+'</span></button><button class="btn" id="sb">Отпр.</button></div><div class="recording-bar" id="recBar" style="display:none">⏺️ Запись...</div></div></div>';
         document.body.appendChild(fs);
     applyChatBackground(true,gid);
     updateChatSize();
     var chatMsgArea=fs.querySelector('.chat-messages');if(chatMsgArea){chatMsgArea.addEventListener('dblclick',function(ev){var sel=window.getSelection&&window.getSelection();if(sel&&String(sel).trim()){var text=String(sel).trim();if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(function(){showToast('Текст скопирован');}).catch(function(){});}});}
         document.getElementById('ab').onclick=function(){document.getElementById('cf').click();};
+        document.getElementById('cf').multiple=true;
+        document.getElementById('cf').onchange=function(){var files=Array.from(this.files||[]);this.value='';sendDroppedGroupFiles(gid,files);};
+        document.getElementById('stickerBtn').onclick=function(){openStickerModal()};
         document.getElementById('voiceBtn').onclick=toggleVoiceRecording;document.getElementById('vidBtn').onclick=function(){startRec('video')};
+        installChatDropZone(fs, function(files){sendDroppedGroupFiles(gid,files)});
         document.getElementById('sb').onclick=function(){sendGroupMessage(gid);};
         document.getElementById('mi').onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendGroupMessage(gid);}};document.getElementById('mi').addEventListener('input',autoGrowMessageInput);
         lgroupMessages(gid);ti=setInterval(function(){lgroupMessages(gid,true)},2500);
@@ -1971,12 +1997,11 @@ function lgroupMessages(gid,silent){
 }
 async function sendGroupMessage(gid){
     var inp=document.getElementById('mi'),fi=document.getElementById('cf'),text=(inp.value||'').trim(),file=fi.files[0];
-    if(!text&&!file)return;
+    if(!text&&!file)return; if(file&&!validateOutgoingFile(file))return;
     var fd=new FormData();if(text)fd.append('message_text',text);if(window.groupReplyTo)fd.append('reply_to',window.groupReplyTo);if(file){fd.append('file',file);if(file.type.startsWith('video/'))fd.append('media_kind','video');else if(file.type.startsWith('image/'))fd.append('media_kind','image');else if(file.type.startsWith('audio/'))fd.append('media_kind','audio');}
     try{var r=await api('/api/groups/'+gid+'/messages',{method:'POST',body:fd});var d=await r.json();if(!r.ok)throw new Error(d.error||'Ошибка');inp.value='';inp.style.height='auto';fi.value='';window.groupReplyTo=null;inp.placeholder='Сообщение...';lgroupMessages(gid);}catch(e){alert(e.message);}
 }
 function autoGrowMessageInput(){var el=document.getElementById('mi');if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,112)+'px';}
-function chatBgKey(group,id){return 'vero-chat-bg-'+(group?'g':'u')+'-'+id;}
 function chatBgKey(group,id){return 'chatTheme:'+ (group?'group:':'private:') + String(id);}
 function safeThemeColor(v,fallback){return /^#[0-9a-f]{6}$/i.test(v||'')?v:fallback;}
 function applyChatBackground(group,id){
@@ -2034,13 +2059,23 @@ function sendSticker(url,name){if(ct&&ct.group){api('/api/groups/'+ct.id+'/stick
 
 function showGroupMembers(gid){
   Promise.all([api('/api/groups/'+gid).then(function(r){return r.json()}),api('/api/friends').then(function(r){return r.json()})]).then(function(results){
-    var d=results[0],friends=results[1].friends||[],members=d.members||[];var html='<div class="modal active" id="groupMembersModal"><div class="modal-content"><h2>👥 Участники группы ('+members.length+')</h2><div class="user-list">';
+    var d=results[0],friends=results[1].friends||[],members=d.members||[];
+    var html='<div class="modal active" id="groupMembersModal"><div class="modal-content"><h2>👥 Участники группы ('+members.length+')</h2><div style="color:var(--text-muted);font-size:12px">Список открыт поверх текущего чата</div><div class="user-list">';
     members.forEach(function(m){html+='<div class="user-item"><div class="user-info"><span class="avatar-sm">'+av(m.avatar)+'</span><span>'+escapeHtml(m.username)+(m.role==='owner'?' — создатель':'')+'</span></div></div>';});
-    if(Number(d.group.owner_id)===Number(U.id)){var ids=members.map(function(m){return Number(m.id)});html+='</div><h3>Добавить друзей</h3><div class="user-list">';friends.filter(function(f){return ids.indexOf(Number(f.id))<0}).forEach(function(f){html+='<label class="user-item"><span class="user-info"><span class="avatar-sm">'+av(f.avatar)+'</span><span>'+escapeHtml(f.username)+'</span></span><input type="checkbox" class="add-group-member" value="'+f.id+'"></label>';});html+='</div><button class="btn" onclick="addSelectedGroupMembers('+gid+')">Добавить выбранных</button>';}
-    html+='<button class="btn btn-gray" onclick="document.getElementById(&quot;groupMembersModal&quot;).remove()">Закрыть</button></div></div>';var old=document.getElementById('groupMembersModal');if(old)old.remove();document.body.insertAdjacentHTML('beforeend',html);
+    html+='</div>';
+    if(Number(d.group.owner_id)===Number(U.id)){
+      var ids=members.map(function(m){return Number(m.id)});
+      html+='<h3>Добавить друзей</h3><div class="user-list">';
+      friends.filter(function(f){return ids.indexOf(Number(f.id))<0}).forEach(function(f){html+='<label class="user-item"><span class="user-info"><span class="avatar-sm">'+av(f.avatar)+'</span><span>'+escapeHtml(f.username)+'</span></span><input type="checkbox" class="add-group-member" value="'+f.id+'"></label>';});
+      html+='</div><button class="btn" onclick="addSelectedGroupMembers('+gid+')">Добавить выбранных</button>';
+    }
+    html+='<button class="btn btn-gray" onclick="closeGroupMembers()">Закрыть</button></div></div>';
+    var old=document.getElementById('groupMembersModal');if(old)old.remove();document.body.insertAdjacentHTML('beforeend',html);
+    var modal=document.getElementById('groupMembersModal');if(modal){modal.addEventListener('click',function(e){if(e.target===modal)closeGroupMembers();});}
   }).catch(function(){alert('Не удалось загрузить участников');});
 }
-function addSelectedGroupMembers(gid){var ids=Array.prototype.map.call(document.querySelectorAll('.add-group-member:checked'),function(x){return Number(x.value)});if(!ids.length){alert('Выберите друзей для добавления');return;}Promise.all(ids.map(function(uid){return api('/api/groups/'+gid+'/members',{method:'POST',body:{user_id:uid}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка добавления');return d;})})})).then(function(){var m=document.getElementById('groupMembersModal');if(m)m.remove();openGroup(gid);}).catch(function(e){alert(e.message||'Не удалось добавить участников');});}
+function closeGroupMembers(){var m=document.getElementById('groupMembersModal');if(m)m.remove();}
+function addSelectedGroupMembers(gid){var ids=Array.prototype.map.call(document.querySelectorAll('.add-group-member:checked'),function(x){return Number(x.value)});if(!ids.length){alert('Выберите друзей для добавления');return;}Promise.all(ids.map(function(uid){return api('/api/groups/'+gid+'/members',{method:'POST',body:{user_id:uid}}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Ошибка добавления');return d;})})})).then(function(){closeGroupMembers();openGroup(gid);}).catch(function(e){alert(e.message||'Не удалось добавить участников');});}
 
 function lcl(){
     ct=null;if(ti){clearInterval(ti);ti=null}pastedFiles=[];cachedMessages={};selfDestructMode=false;photoSendMode=null;closeChatFullscreen();
@@ -2100,11 +2135,12 @@ function oc(id,name,avatar){
     
     document.body.appendChild(fs);
     applyChatBackground(false,id);
+    installChatDropZone(fs, function(files){files.forEach(function(file){if(validateOutgoingFile(file))addPastedFile(file)});updatePastePreview();});
     updateChatSize();
     var chatMsgArea=fs.querySelector('.chat-messages');if(chatMsgArea){chatMsgArea.addEventListener('dblclick',function(ev){var sel=window.getSelection&&window.getSelection();if(sel&&String(sel).trim()){var text=String(sel).trim();if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(function(){showToast('Текст скопирован');}).catch(function(){});}});}
     
     document.getElementById('ab').onclick=function(){document.getElementById('cf').click()};
-    document.getElementById('cf').onchange=function(e){var files=e.target.files;for(var i=0;i<files.length;i++)addPastedFile(files[i]);updatePastePreview()};
+    document.getElementById('cf').onchange=function(e){var files=Array.from(e.target.files||[]);for(var i=0;i<files.length;i++){if(validateOutgoingFile(files[i]))addPastedFile(files[i]);}this.value='';updatePastePreview()};
     document.getElementById('sb').onclick=function(){if(pastedFiles.length>0)sendPastedFiles(id);else sm(id)};
     document.getElementById('mi').onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(pastedFiles.length>0)sendPastedFiles(id);else sm(id)}};document.getElementById('mi').addEventListener('input',autoGrowMessageInput);
     
@@ -3159,6 +3195,7 @@ async function sm(id){
     var file = fi ? fi.files[0] : null;
     
     if (!text && !file) return;
+    if (file && !validateOutgoingFile(file)) return;
     
     if (file && file.type.startsWith('image/') && !photoSendMode) {
         alert('Выберите режим отправки фото: 📷 Обычное или 🔥 Одноразовое');
@@ -3209,7 +3246,7 @@ async function sendPastedFiles(chatId){
     if(hP&&!photoSendMode){alert('Выберите режим отправки фото: 📷 Обычное или 🔥 Одноразовое');return}
     var sb=document.getElementById('sb');if(sb){sb.disabled=true;sb.textContent='...'}
     for(var i=0;i<pastedFiles.length;i++){
-        var item=pastedFiles[i],fd=new FormData();fd.append('file',item.file,item.name);
+        var item=pastedFiles[i];if(!validateOutgoingFile(item.file)){if(sb){sb.disabled=false;sb.textContent='Отпр.'}return;}var fd=new FormData();fd.append('file',item.file,item.name);
         var pasteDuration=await getMediaDuration(item.file); if(pasteDuration)fd.append('duration_seconds',String(pasteDuration));
         if(item.type.startsWith('video/'))fd.append('media_kind','video'); else if(item.type.startsWith('audio/'))fd.append('media_kind','audio'); else if(item.type.startsWith('image/'))fd.append('media_kind','image'); else fd.append('media_kind','file');
         if(i===0){var inp=document.getElementById('mi');var tx=inp?inp.value.trim():'';if(tx)fd.append('message_text',tx)}
@@ -3222,7 +3259,7 @@ async function sendPastedFiles(chatId){
             cancelReply();
         }
         
-        try{await api('/api/messages/'+chatId,{method:'POST',body:fd})}catch(e){}
+        try{var uploadResponse=await api('/api/messages/'+chatId,{method:'POST',body:fd});if(!uploadResponse.ok){var uploadError={};try{uploadError=await uploadResponse.json()}catch(e){}throw new Error(uploadError.error||'Ошибка загрузки ('+uploadResponse.status+')');}}catch(e){alert(e.message||'Не удалось отправить файл');break;}
     }
     clearPastedFiles();var inp=document.getElementById('mi');if(inp)inp.value='';
     if(sb){sb.disabled=false;sb.textContent='Отпр.'}selfDestructMode=false;photoSendMode=null;hidePhotoSendOptions();lm(chatId);
@@ -3496,6 +3533,7 @@ function getMediaDuration(file) {
 }
 
 async function sendFile(id,file){
+    if(!validateOutgoingFile(file))return;
     var fd=new FormData(); fd.append('file',file);
     var duration = await getMediaDuration(file);
     if (duration) fd.append('duration_seconds', String(duration));
@@ -3503,12 +3541,21 @@ async function sendFile(id,file){
     else if (file.type.startsWith('audio/')) fd.append('media_kind','audio');
     else if (file.type.startsWith('image/')) fd.append('media_kind','image');
     else fd.append('media_kind','file');
-    var endpoint=ct&&ct.group?('/api/groups/'+id+'/messages'):('/api/messages/'+id);api(endpoint,{method:'POST',body:fd}).then(function(){ if(ct&&ct.group)lgroupMessages(id);else lm(id); }).catch(function(err){ console.error('Ошибка отправки файла:', err); alert('Ошибка отправки файла.'); });
+    if(!validateOutgoingFile(file))return;var endpoint=ct&&ct.group?('/api/groups/'+id+'/messages'):('/api/messages/'+id);api(endpoint,{method:'POST',body:fd}).then(async function(r){var d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.error||'Ошибка загрузки');if(ct&&ct.group)lgroupMessages(id);else lm(id);}).catch(function(err){ console.error('Ошибка отправки файла:', err); alert(err.message||'Ошибка отправки файла.'); });
 }
 
+function getUploadLimitBytes(){var mb=Number(window.VERO_MAX_FILE_SIZE_MB||100);return (Number.isFinite(mb)&&mb>0?mb:100)*1024*1024;}
+function validateOutgoingFile(file){if(!file)return true;var limit=getUploadLimitBytes();if(file.size>limit){alert('Файл «'+(file.name||'без имени')+'» слишком большой. Максимальный размер одного файла — '+Math.round(limit/1048576)+' МБ.');return false;}return true;}
+function installChatDropZone(root,onFiles){if(!root||root.dataset.dropInstalled==='1')return;root.dataset.dropInstalled='1';var area=root.querySelector('.chat-messages')||root.querySelector('.chat-container')||root;['dragenter','dragover'].forEach(function(name){area.addEventListener(name,function(e){if(!e.dataTransfer||!Array.from(e.dataTransfer.types||[]).includes('Files'))return;e.preventDefault();area.classList.add('chat-drop-active');});});['dragleave','dragend'].forEach(function(name){area.addEventListener(name,function(e){if(!area.contains(e.relatedTarget))area.classList.remove('chat-drop-active');});});area.addEventListener('drop',function(e){if(!e.dataTransfer||!e.dataTransfer.files||!e.dataTransfer.files.length)return;e.preventDefault();area.classList.remove('chat-drop-active');onFiles(Array.from(e.dataTransfer.files));});}
+async function sendDroppedGroupFiles(gid,files){for(var i=0;i<files.length;i++){var file=files[i];if(!validateOutgoingFile(file))continue;var fd=new FormData();fd.append('file',file,file.name||'file');if(file.type&&file.type.startsWith('video/'))fd.append('media_kind','video');else if(file.type&&file.type.startsWith('image/'))fd.append('media_kind','image');else if(file.type&&file.type.startsWith('audio/'))fd.append('media_kind','audio');else fd.append('media_kind','file');try{var r=await api('/api/groups/'+gid+'/messages',{method:'POST',body:fd}),d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.error||'Не удалось отправить файл');}catch(e){alert(e.message||'Ошибка отправки файла');break;}}lgroupMessages(gid);}
+function openSecuritySettings(){var s=document.getElementById('securityModal');if(s){s.classList.add('active');document.body.style.overflow='hidden';}}
+function closeSecuritySettings(){var s=document.getElementById('securityModal');if(s)s.classList.remove('active');var settings=document.getElementById('settingsModal');document.body.style.overflow=settings&&settings.classList.contains('active')?'hidden':'';}
+async function changePassword(){var current=document.getElementById('currentPassword'),next=document.getElementById('newPassword'),confirmInput=document.getElementById('confirmNewPassword'),btn=document.getElementById('savePasswordBtn');if(!current||!next||!confirmInput)return;var a=current.value,b=next.value,c=confirmInput.value;if(!a||!b||!c){alert('Заполните все поля.');return;}if(b.length<8){alert('Новый пароль должен содержать не менее 8 символов.');return;}if(b!==c){alert('Новые пароли не совпадают.');return;}btn.disabled=true;try{var r=await api('/api/account/change-password',{method:'POST',body:{current_password:a,new_password:b}}),d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.error||'Не удалось сменить пароль');alert('Пароль успешно изменён. Выполните вход заново.');closeSecuritySettings();closeSettings();localStorage.removeItem('token');localStorage.removeItem('user');location.href='/login.html';}catch(e){alert(e.message||'Ошибка смены пароля');}finally{btn.disabled=false;}}
+
 function logout(){
-    if(isTemp){fetch('/api/delete-temp-account',{method:'POST',headers:{Authorization:'Bearer '+T}}).finally(function(){localStorage.clear();location.href='/login.html'})}
-    else{localStorage.clear();location.href='/login.html'}
+    function clearSessionKeepPreferences(){var keep={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k==='chatFontSize'||k==='chatMaxWidth'||k.indexOf('chatTheme:')===0||k.indexOf('vero-chat-bg-')===0)keep[k]=localStorage.getItem(k);}}catch(e){}localStorage.clear();Object.keys(keep).forEach(function(k){try{localStorage.setItem(k,keep[k])}catch(e){}});location.href='/login.html';}
+    if(isTemp){fetch('/api/delete-temp-account',{method:'POST',headers:{Authorization:'Bearer '+T}}).finally(clearSessionKeepPreferences)}
+    else{clearSessionKeepPreferences()}
 }
 
 function openSettings(){
