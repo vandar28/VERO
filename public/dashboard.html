@@ -1282,6 +1282,29 @@ body.chat-open #tc {
 .call-avatar{font-size:64px}
 .call-status{text-align:center;color:var(--text-secondary);font-size:12px;margin:12px 0}
 .call-actions{display:flex;gap:8px;justify-content:center}
+
+/* VERO refinements: consistent blue chat controls and full-screen account security. */
+.chat-input-area .icon-btn,
+.chat-input-area .voice-btn,
+.chat-input-area #stickerBtn,
+.chat-input-area #vidBtn,
+.chat-input-area #ab {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+}
+.chat-input-area .icon-btn:hover,
+.chat-input-area .voice-btn:hover,
+.chat-input-area #stickerBtn:hover,
+.chat-input-area #vidBtn:hover,
+.chat-input-area #ab:hover { background: var(--accent-light, #2684ff) !important; color:#fff !important; }
+#securityModal { position:fixed!important; inset:0!important; z-index:10080!important; padding:0!important; margin:0!important; align-items:stretch!important; justify-content:stretch!important; }
+#securityModal .modal { width:100%!important; max-width:none!important; height:100dvh!important; max-height:100dvh!important; overflow:auto!important; box-sizing:border-box!important; border-radius:0!important; margin:0!important; padding:clamp(18px,4vw,40px)!important; }
+#groupMembersModal { position:fixed!important; inset:0!important; z-index:10090!important; width:100%!important; height:100dvh!important; }
+.chat-drop-active { outline:3px dashed var(--accent)!important; outline-offset:-6px; }
+.msg.search-highlight { outline:2px solid #2995ff!important; outline-offset:2px; }
+.msg.search-current { outline:3px solid #62b4ff!important; outline-offset:2px; background-color:rgba(41,149,255,.16)!important; }
+
 </style>
 <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -2213,22 +2236,20 @@ function closeSearch(){
 }
 
 function doSearch(){
-    var query = (document.getElementById('searchInput').value || '').toLowerCase().trim();
-    clearSearchHighlights();
-    searchResults = [];
-    searchIndex = 0;
-    if(!query){ document.getElementById('searchCount').textContent = ''; return; }
-    var messages = document.querySelectorAll('#cm .msg');
-    messages.forEach(function(el){
-        var text = (el.textContent || '').toLowerCase();
-        if(text.indexOf(query) !== -1){
-            searchResults.push(el);
-            el.classList.add('search-highlight');
-        }
+    var input=document.getElementById('searchInput');
+    var query=((input&&input.value)||'').toLocaleLowerCase().trim();
+    clearSearchHighlights(); searchResults=[]; searchIndex=0;
+    var countEl=document.getElementById('searchCount');
+    if(!query){if(countEl)countEl.textContent='';return;}
+    // Search every message currently rendered, including repeated filenames and attachment labels.
+    document.querySelectorAll('#cm .msg').forEach(function(el){
+        var parts=[el.textContent||'',el.getAttribute('data-message-text')||'',el.getAttribute('data-file-name')||''];
+        el.querySelectorAll('[download],[title],[aria-label]').forEach(function(n){parts.push(n.getAttribute('download')||'',n.getAttribute('title')||'',n.getAttribute('aria-label')||'');});
+        var haystack=parts.join(' ').toLocaleLowerCase();
+        if(haystack.indexOf(query)!==-1){searchResults.push(el);el.classList.add('search-highlight');}
     });
-    var count = searchResults.length;
-    document.getElementById('searchCount').textContent = count ? (searchIndex + 1) + '/' + count : '0/0';
-    if(count > 0){ searchIndex = 0; navigateToSearchResult(); }
+    if(countEl)countEl.textContent=searchResults.length?(1+'/'+searchResults.length):'0/0';
+    if(searchResults.length)navigateToSearchResult();
 }
 
 function navigateToSearchResult(){

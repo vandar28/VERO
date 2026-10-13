@@ -44,6 +44,20 @@ if (!cloudinaryConfig.cloud_name || !cloudinaryConfig.api_key || !cloudinaryConf
 cloudinary.config(cloudinaryConfig);
 console.log('✅ Cloudinary настроен с cloud_name:', process.env.CLOUDINARY_CLOUD_NAME);
 
+// Restore UTF-8 filenames that some multipart clients/parsers expose as Latin-1 mojibake.
+function normalizeUploadedFilename(req, res, next) {
+  try {
+    if (req.file && typeof req.file.originalname === 'string') {
+      const name = req.file.originalname;
+      if (/[ÃÐÑâ€]/.test(name)) {
+        const repaired = Buffer.from(name, 'latin1').toString('utf8');
+        if (repaired && !repaired.includes('�')) req.file.originalname = repaired;
+      }
+    }
+  } catch (e) { /* preserve the original upload if normalization fails */ }
+  next();
+}
+
 // ===== НАСТРОЙКА MULTER ДЛЯ CLOUDINARY =====
 // ===== НАСТРОЙКА CLOUDINARY STORAGE =====
 // Не ограничиваем allowed_formats: телефоны могут отдавать HEIC/AVIF,
@@ -730,7 +744,7 @@ app.get('/api/check-file-access', auth, async function(req, res) {
 });
 
 // ===== ЗАГРУЗКА ФАЙЛОВ (исправлено) =====
-app.post('/api/upload', auth, upload.single('file'), async function(req, res) {
+app.post('/api/upload', auth, upload.single('file'), normalizeUploadedFilename, async function(req, res) {
   try {
     if (!req.file) return res.status(400);
     
@@ -756,7 +770,7 @@ app.post('/api/upload', auth, upload.single('file'), async function(req, res) {
 
 // ===== СКАЧИВАНИЕ ФАЙЛОВ С ОРИГИНАЛЬНЫМ ИМЕНЕМ =====
 function safeDownloadName(name) {
-  name = String(name || 'file').replace(/[\\\r\n]/g, '_').trim();
+  name = String(name || 'file').replace(/[\\\r\n\u0000-\u001f\u007f]/g, '_').trim();
   return name || 'file';
 }
 async function proxyCloudinaryFile(res, url, filename, contentType) {
@@ -908,7 +922,7 @@ app.get('/api/friends/requests', auth, async function(req, res) {
 });
 
 // ===== СООБЩЕНИЯ (исправлено) =====
-app.post('/api/messages/:fid', auth, upload.single('file'), async function(req, res) {
+app.post('/api/messages/:fid', auth, upload.single('file'), normalizeUploadedFilename, async function(req, res) {
   try {
     const fid = parseInt(req.params.fid);
     const friend = await dbGet("SELECT * FROM friends WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?)) AND status='accepted'", [req.userId, fid, fid, req.userId]);
@@ -1257,7 +1271,7 @@ app.get('/api/groups/:id/messages', auth, async function(req, res) {
   res.json({ messages: messages });
 });
 
-app.post('/api/groups/:id/messages', auth, upload.single('file'), async function(req, res) {
+app.post('/api/groups/:id/messages', auth, upload.single('file'), normalizeUploadedFilename, async function(req, res) {
   try {
     const gid = Number(req.params.id);
     if (!(await isGroupMember(gid, req.userId))) return res.status(403).json({ error: 'Нет доступа' });
